@@ -14,10 +14,11 @@ use crate::ident::{
 };
 use crate::module::module_name_help;
 use crate::parser::{
-    self, backtrackable, byte, byte_indent, increment_min_indent, line_min_indent, optional,
-    reset_min_indent, sep_by1, sep_by1_e, set_min_indent, specialize_err, specialize_err_ref, then,
-    two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber,
-    EPattern, ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
+    self, backtrackable, byte, byte_indent_closure_def_start, increment_min_indent,
+    line_min_indent, optional, reset_min_indent, sep_by1, sep_by1_e, set_min_indent,
+    specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr, EIf, EImport,
+    EImportParams, EInParens, EList, ENumber, EPattern, ERecord, EString, EType, EWhen, Either,
+    ParseResult, Parser,
 };
 use crate::pattern::{closure_param, loc_implements_parser};
 use crate::state::State;
@@ -2580,7 +2581,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         // After the first token, all other tokens must be indented past the start of the line
         indented_seq_skip_first!(
             // All closures start with a '\' - e.g. (\x -> x + 1)
-            byte_indent(b'\\', EClosure::Start),
+            byte_indent_closure_def_start(),
             // Once we see the '\', we're committed to parsing this as a closure.
             // It may turn out to be malformed, but it is definitely a closure.
             and!(

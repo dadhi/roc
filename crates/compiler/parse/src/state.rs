@@ -3,6 +3,9 @@ use std::fmt;
 
 use crate::parser::Progress;
 
+pub const CLOSURE_PIPE_SUGAR: &[u8] = b"\\>";
+pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\a__ -> a__ |>";
+
 /// A position in a source file.
 // NB: [Copy] is explicitly NOT derived to reduce the chance of bugs due to accidentally re-using
 // parser state.
@@ -21,6 +24,14 @@ pub struct State<'a> {
 
     /// Position of the first non-whitespace character on the current line
     pub(crate) line_start_after_whitespace: Position,
+
+    // TODO @wip
+    /// The bytes desugared from the shorthand syntax in the original bytes, e.g. `\>` to `\x -> x |>`
+    closure_pipe_desugar_active: bool,
+
+    /// The offset inside the desugared bytes,
+    /// so the logical current offset will be `offset + closure_pipe_desugar_offset`
+    closure_pipe_desugar_offset: usize,
 }
 
 impl<'a> State<'a> {
@@ -33,6 +44,9 @@ impl<'a> State<'a> {
             // Technically not correct.
             // We don't know the position of the first non-whitespace character yet.
             line_start_after_whitespace: Position::zero(),
+
+            closure_pipe_desugar_active: false,
+            closure_pipe_desugar_offset: 0,
         }
     }
 
@@ -41,7 +55,11 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn bytes(&self) -> &'a [u8] {
-        &self.original_bytes[self.offset..]
+        if self.closure_pipe_desugar_active {
+            &CLOSURE_PIPE_DESUGAR[self.closure_pipe_desugar_offset..]
+        } else {
+            &self.original_bytes[self.offset..]
+        }
     }
 
     pub fn column(&self) -> u32 {
@@ -66,10 +84,33 @@ impl<'a> State<'a> {
         }
     }
 
-    /// Mutably advance the state by a given offset
+    #[must_use]
     #[inline(always)]
+    pub(crate) fn activate_closure_pipe_desugar(mut self) -> State<'a> {
+        debug_assert!(
+            !self.closure_pipe_desugar_active,
+            "closure_pipe_desugar should be inactive"
+        );
+        self.closure_pipe_desugar_active = true;
+        self.closure_pipe_desugar_offset = 0;
+        self
+    }
+
+    /// Mutably advance the state by a given offset
     pub(crate) fn advance_mut(&mut self, offset: usize) {
-        self.offset += offset;
+        if self.closure_pipe_desugar_active {
+            let new_offset = self.closure_pipe_desugar_offset + offset;
+            let inserted_bytes_len = CLOSURE_PIPE_DESUGAR.len();
+            if new_offset >= inserted_bytes_len {
+                self.closure_pipe_desugar_active = false;
+                let over_offset = new_offset - inserted_bytes_len;
+                self.offset += CLOSURE_PIPE_SUGAR.len() + over_offset;
+            } else {
+                self.closure_pipe_desugar_offset = new_offset;
+            }
+        } else {
+            self.offset += offset;
+        }
     }
 
     /// If the next `text.len()` bytes of the input match the provided `text`,
@@ -88,6 +129,25 @@ impl<'a> State<'a> {
     #[must_use]
     #[inline(always)]
     pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
+        if self.closure_pipe_desugar_active {
+            let new_offset = self.closure_pipe_desugar_offset + offset;
+            let inserted_bytes_len = CLOSURE_PIPE_DESUGAR.len();
+            if new_offset >= inserted_bytes_len {
+                self.closure_pipe_desugar_active = false;
+                let over_offset = new_offset - inserted_bytes_len;
+                self.offset += CLOSURE_PIPE_SUGAR.len() + over_offset;
+            } else {
+                self.closure_pipe_desugar_offset = new_offset;
+            }
+        } else {
+            self.offset += offset;
+        }
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub(crate) const fn advance_original(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self
     }
@@ -115,6 +175,10 @@ impl<'a> State<'a> {
     /// Returns the current position
     pub const fn pos(&self) -> Position {
         Position::new(self.offset as u32)
+    }
+
+    pub const fn closure_pipe_desugared(&self) -> bool {
+        self.closure_pipe_desugar_active
     }
 
     /// Returns whether the parser has reached the end of the input

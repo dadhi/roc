@@ -1,4 +1,4 @@
-use crate::state::State;
+use crate::state::{State, CLOSURE_PIPE_SUGAR};
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
 use roc_region::all::{Loc, Position, Region};
@@ -2087,8 +2087,16 @@ where
     }
 }
 
-/// Matches a single `u8` and moves the state's position forward if it succeeds.
-/// This parser will fail if it is a lower indentation level than it should be.
+// TODO @wip
+// / // Error case
+// / let state = State::new(" hello, world".as_bytes());
+// / let _ = byte(b' ', Problem::NotFound).parse(&arena, state.clone(), 0).unwrap();
+// / let (progress, problem) = parser.parse(&arena, state, 0).unwrap_err();
+// / assert_eq!(progress, Progress::NoProgress);
+// / assert_eq!(problem, Problem::WrongIndentLevel(Position::zero()));
+
+/// Identifies the start of the closure and possibly the CLOSURE_PIPE_SUGAR.
+/// The closure definition start is either `\a,... -> body` or `\>`.
 ///
 /// # Example
 ///
@@ -2098,47 +2106,63 @@ where
 /// # use crate::roc_parse::parser::{Parser, Progress, byte, byte_indent};
 /// # use roc_region::all::Position;
 /// # use bumpalo::Bump;
-/// # #[derive(Debug, PartialEq)]
-/// # enum Problem {
-/// #     NotFound(Position),
-/// #     WrongIndentLevel(Position),
-/// # }
 /// # let arena = Bump::new();
-/// let parser = byte_indent(b'h', Problem::WrongIndentLevel);
+/// let parser = byte_indent_closure_def_start();
 ///
 /// // Success case
-/// let (progress, output, state) = parser.parse(&arena, State::new("hello, world".as_bytes()), 0).unwrap();
+/// let (progress, output, state) = parser.parse(&arena, State::new(b"\\> Num.add 42"), 0).unwrap();
 /// assert_eq!(progress, Progress::MadeProgress);
 /// assert_eq!(output, ());
-/// assert_eq!(state.pos(), Position::new(1));
+/// assert_eq!(state.pos(), Position::new(0));
 ///
-/// // Error case
-/// let state = State::new(" hello, world".as_bytes());
-/// let _ = byte(b' ', Problem::NotFound).parse(&arena, state.clone(), 0).unwrap();
-/// let (progress, problem) = parser.parse(&arena, state, 0).unwrap_err();
-/// assert_eq!(progress, Progress::NoProgress);
-/// assert_eq!(problem, Problem::WrongIndentLevel(Position::zero()));
 /// ```
-pub fn byte_indent<'a, ToError, E>(byte_to_match: u8, to_error: ToError) -> impl Parser<'a, (), E>
-where
-    ToError: Fn(Position) -> E,
-    E: 'a,
-{
-    debug_assert_ne!(byte_to_match, b'\n');
-
+pub fn byte_indent_closure_def_start<'a>() -> impl Parser<'a, (), EClosure<'a>> {
     move |_arena: &'a Bump, state: State<'a>, min_indent: u32| {
         if min_indent > state.column() {
-            return Err((NoProgress, to_error(state.pos())));
+            return Err((NoProgress, EClosure::Start(state.pos())));
         }
 
-        match state.bytes().first() {
-            Some(x) if *x == byte_to_match => {
-                let state = state.advance(1);
-                Ok((MadeProgress, (), state))
+        if state.original_bytes().starts_with(CLOSURE_PIPE_SUGAR) {
+            let state = state.activate_closure_pipe_desugar();
+            Ok((MadeProgress, (), state))
+        } else {
+            match state.bytes().first() {
+                Some(x) if *x == b'\\' => {
+                    let state = state.advance_original(1);
+                    Ok((MadeProgress, (), state))
+                }
+                _ => Err((NoProgress, EClosure::Start(state.pos()))),
             }
-            _ => Err((NoProgress, to_error(state.pos()))),
         }
     }
+}
+
+#[test]
+fn parse_closure_pipe() {
+    let arena = Bump::new();
+    let parser = byte_indent_closure_def_start();
+
+    let text = b"\\> Num.add 42";
+    let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
+
+    assert_eq!(progress, Progress::MadeProgress);
+    assert_eq!(output, ());
+    assert_eq!(state.pos(), Position::new(0));
+    assert_eq!(state.closure_pipe_desugared(), true);
+}
+
+#[test]
+fn parse_closure_def_start() {
+    let arena = Bump::new();
+    let parser = byte_indent_closure_def_start();
+
+    let text = b"\\x -> Num.add x 42";
+    let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
+
+    assert_eq!(progress, Progress::MadeProgress);
+    assert_eq!(output, ());
+    assert_eq!(state.pos(), Position::new(1));
+    assert_eq!(state.closure_pipe_desugared(), false);
 }
 
 /// Matches two `u8` in a row.

@@ -4,7 +4,9 @@ use std::fmt;
 use crate::parser::Progress;
 
 pub const CLOSURE_PIPE_SUGAR: &[u8] = b"\\>";
+pub const CLOSURE_PIPE_SUGAR_LEN: usize = CLOSURE_PIPE_SUGAR.len();
 pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\a__ -> a__ |>";
+pub const CLOSURE_PIPE_DESUGAR_LEN: usize = CLOSURE_PIPE_DESUGAR.len();
 
 /// A position in a source file.
 // NB: [Copy] is explicitly NOT derived to reduce the chance of bugs due to accidentally re-using
@@ -56,13 +58,20 @@ impl<'a> State<'a> {
 
     pub fn original_bytes_at_offset(&self) -> &'a [u8] {
         dbg!(self.offset);
-        dbg!(self.original_bytes.get(self.offset));
+        dbg!(String::from_utf8(self.original_bytes[self.offset..].to_vec()).unwrap());
         &self.original_bytes[self.offset..]
     }
 
     pub(crate) fn bytes(&self) -> &'a [u8] {
         if self.closure_pipe_desugar_active {
-            &CLOSURE_PIPE_DESUGAR[self.closure_pipe_desugar_offset..]
+            if self.closure_pipe_desugar_offset >= CLOSURE_PIPE_DESUGAR_LEN {
+                let original_offset =
+                    self.offset + CLOSURE_PIPE_SUGAR_LEN + self.closure_pipe_desugar_offset
+                        - CLOSURE_PIPE_DESUGAR_LEN;
+                &self.original_bytes[original_offset..]
+            } else {
+                &CLOSURE_PIPE_DESUGAR[self.closure_pipe_desugar_offset..]
+            }
         } else {
             &self.original_bytes[self.offset..]
         }
@@ -106,11 +115,9 @@ impl<'a> State<'a> {
     pub(crate) fn advance_mut(&mut self, offset: usize) {
         if self.closure_pipe_desugar_active {
             let new_offset = self.closure_pipe_desugar_offset + offset;
-            let inserted_bytes_len = CLOSURE_PIPE_DESUGAR.len();
-            if new_offset >= inserted_bytes_len {
+            if new_offset >= CLOSURE_PIPE_DESUGAR_LEN {
+                self.offset += CLOSURE_PIPE_SUGAR_LEN + new_offset - CLOSURE_PIPE_DESUGAR_LEN;
                 self.closure_pipe_desugar_active = false;
-                let over_offset = new_offset - inserted_bytes_len;
-                self.offset += CLOSURE_PIPE_SUGAR.len() + over_offset;
             } else {
                 self.closure_pipe_desugar_offset = new_offset;
             }
@@ -137,11 +144,9 @@ impl<'a> State<'a> {
     pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
         if self.closure_pipe_desugar_active {
             let new_offset = self.closure_pipe_desugar_offset + offset;
-            let inserted_bytes_len = CLOSURE_PIPE_DESUGAR.len();
-            if new_offset >= inserted_bytes_len {
+            if new_offset >= CLOSURE_PIPE_DESUGAR_LEN {
+                self.offset += CLOSURE_PIPE_SUGAR_LEN + new_offset - CLOSURE_PIPE_DESUGAR_LEN;
                 self.closure_pipe_desugar_active = false;
-                let over_offset = new_offset - inserted_bytes_len;
-                self.offset += CLOSURE_PIPE_SUGAR.len() + over_offset;
             } else {
                 self.closure_pipe_desugar_offset = new_offset;
             }

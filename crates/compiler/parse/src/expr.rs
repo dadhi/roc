@@ -2577,42 +2577,56 @@ pub fn parse_top_level_defs<'a>(
 
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     // closure_help_help(options)
-    map_with_arena!(
-        // After the first token, all other tokens must be indented past the start of the line
-        indented_seq_skip_first!(
-            // All closures start with a '\' - e.g. (\x -> x + 1)
-            byte_indent_closure_def_start(),
-            // Once we see the '\', we're committed to parsing this as a closure.
-            // It may turn out to be malformed, but it is definitely a closure.
-            and!(
-                // Parse the params
-                // Params are comma-separated
-                sep_by1_e(
-                    byte(b',', EClosure::Comma),
-                    space0_around_ee(
-                        specialize_err(EClosure::Pattern, closure_param()),
-                        EClosure::IndentArg,
-                        EClosure::IndentArrow,
-                    ),
-                    EClosure::Arg,
-                ),
-                skip_first!(
-                    // Parse the -> which separates params from body
-                    two_bytes(b'-', b'>', EClosure::Arrow),
-                    // Parse the body
-                    space0_before_e(
-                        specialize_err_ref(EClosure::Body, expr_start(options)),
-                        EClosure::IndentBody
+    move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
+        let start_indent = state.line_indent();
+        let p1_indent = start_indent;
+        let p2_indent = start_indent + 1;
+        match byte_indent_closure_def_start().parse(arena, state, p1_indent) {
+            Ok((p1, (), state)) => {
+                match (move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+                    match sep_by1_e(
+                        byte(b',', EClosure::Comma),
+                        space0_around_ee(
+                            specialize_err(EClosure::Pattern, closure_param()),
+                            EClosure::IndentArg,
+                            EClosure::IndentArrow,
+                        ),
+                        EClosure::Arg,
                     )
-                )
-            )
-        ),
-        |arena: &'a Bump, (params, body)| {
-            let params: Vec<'a, Loc<Pattern<'a>>> = params;
-            let params: &'a [Loc<Pattern<'a>>] = params.into_bump_slice();
-            Expr::Closure(params, arena.alloc(body))
+                    .parse(arena, state, min_indent)
+                    {
+                        Ok((_p1, out1, state)) => {
+                            match two_bytes(b'-', b'>', EClosure::Arrow)
+                                .parse(arena, state, min_indent)
+                            {
+                                Ok((p1, _, state)) => match space0_before_e(
+                                    specialize_err_ref(EClosure::Body, expr_start(options)),
+                                    EClosure::IndentBody,
+                                )
+                                .parse(arena, state, min_indent)
+                                {
+                                    Ok((p2, out2, state)) => Ok((p1.or(p2), (out1, out2), state)),
+                                    Err((p2, fail)) => Err((p1.or(p2), fail)),
+                                },
+                                Err((progress, fail)) => Err((progress, fail)),
+                            }
+                        }
+                        Err((progress, fail)) => Err((progress, fail)),
+                    }
+                })
+                .parse(arena, state, p2_indent)
+                {
+                    Ok((p2, out2, state)) => Ok((
+                        p1.or(p2),
+                        Expr::Closure(out2.0.into_bump_slice(), arena.alloc(out2.1)),
+                        state,
+                    )),
+                    Err((p2, fail)) => Err((p1.or(p2), fail)),
+                }
+            }
+            Err((progress, fail)) => Err((progress, fail)),
         }
-    )
+    }
 }
 
 mod when {

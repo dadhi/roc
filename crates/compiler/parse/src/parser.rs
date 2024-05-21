@@ -1761,7 +1761,7 @@ macro_rules! indented_seq_skip_first {
                 },
                 Err((progress, fail)) => Err((progress, fail)),
             }
-        }
+        } 
     };
 }
 
@@ -2130,13 +2130,16 @@ pub fn byte_indent_closure_def_start<'a>() -> impl Parser<'a, (), EClosure<'a>> 
             return Err((NoProgress, EClosure::Start(state.pos())));
         }
 
-        if state.original_bytes().starts_with(CLOSURE_PIPE_SUGAR) {
+        if state
+            .original_bytes_at_offset()
+            .starts_with(CLOSURE_PIPE_SUGAR)
+        {
             let state = state.activate_closure_pipe_desugar();
             Ok((MadeProgress, (), state))
         } else {
             match state.bytes().first() {
                 Some(x) if *x == b'\\' => {
-                    let state = state.advance_original(1);
+                    let state = state.advance_original_bytes(1);
                     Ok((MadeProgress, (), state))
                 }
                 _ => Err((NoProgress, EClosure::Start(state.pos()))),

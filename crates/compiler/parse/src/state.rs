@@ -54,6 +54,12 @@ impl<'a> State<'a> {
         self.original_bytes
     }
 
+    pub fn original_bytes_at_offset(&self) -> &'a [u8] {
+        dbg!(self.offset);
+        dbg!(self.original_bytes.get(self.offset));
+        &self.original_bytes[self.offset..]
+    }
+
     pub(crate) fn bytes(&self) -> &'a [u8] {
         if self.closure_pipe_desugar_active {
             &CLOSURE_PIPE_DESUGAR[self.closure_pipe_desugar_offset..]
@@ -147,7 +153,7 @@ impl<'a> State<'a> {
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance_original(mut self, offset: usize) -> State<'a> {
+    pub(crate) const fn advance_original_bytes(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self
     }

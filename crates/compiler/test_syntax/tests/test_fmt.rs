@@ -4765,6 +4765,37 @@ mod test_fmt {
         ));
     }
 
+    #[test]
+    fn func_call_trailing_lambda_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \x -> x |> Num.add 1
+
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_pipe_sugar() {
+        expr_formats_to(
+            indoc!(
+                r"
+                list = List.map [1, 2, 3] \> Num.add 1
+
+                list
+                "
+            ),
+            indoc!(
+                r"
+                list = List.map [1, 2, 3] \a__ -> \a__ |> Num.add 1
+
+                list
+                "
+            ),
+        );
+    }
+
     // MODULES
 
     #[test]

@@ -125,7 +125,7 @@ fn module_params<'a>() -> impl Parser<'a, ModuleParams<'a>, EParams<'a>> {
         params: specialize_err(EParams::Pattern, record_pattern_fields()),
         before_arrow: skip_second!(
             space0_e(EParams::BeforeArrow),
-            loc!(two_bytes(b'-', b'>', EParams::Arrow))
+            loc!(two_bytes(b"->", EParams::Arrow))
         ),
         after_arrow: space0_e(EParams::AfterArrow),
     })
@@ -923,7 +923,7 @@ fn imports_entry<'a>() -> impl Parser<'a, Spaced<'a, ImportsEntry<'a>>, EImports
                     and!(
                         and!(
                             space0_e(EImports::AsKeyword),
-                            two_bytes(b'a', b's', EImports::AsKeyword)
+                            two_bytes(b"as", EImports::AsKeyword)
                         ),
                         space0_e(EImports::AsKeyword)
                     )

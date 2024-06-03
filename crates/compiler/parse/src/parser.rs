@@ -1761,7 +1761,7 @@ macro_rules! indented_seq_skip_first {
                 },
                 Err((progress, fail)) => Err((progress, fail)),
             }
-        } 
+        }
     };
 }
 
@@ -2202,7 +2202,7 @@ fn parse_closure_def_start_failed() {
 /// #     NotFound(Position),
 /// # }
 /// # let arena = Bump::new();
-/// let parser = two_bytes(b'h', b'e', Problem::NotFound);
+/// let parser = two_bytes(b"he", Problem::NotFound);
 ///
 /// // Success case
 /// let (progress, output, state) = parser.parse(&arena, State::new("hello, world".as_bytes()), 0).unwrap();
@@ -2215,22 +2215,13 @@ fn parse_closure_def_start_failed() {
 /// assert_eq!(progress, Progress::NoProgress);
 /// assert_eq!(problem, Problem::NotFound(Position::zero()));
 /// ```
-pub fn two_bytes<'a, ToError, E>(
-    byte_1: u8,
-    byte_2: u8,
-    to_error: ToError,
-) -> impl Parser<'a, (), E>
+pub fn two_bytes<'a, ToError, E>(bytes: &'a [u8; 2], to_error: ToError) -> impl Parser<'a, (), E>
 where
     ToError: Fn(Position) -> E,
     E: 'a,
 {
-    debug_assert_ne!(byte_1, b'\n');
-    debug_assert_ne!(byte_2, b'\n');
-
-    let needle = [byte_1, byte_2];
-
     move |_arena: &'a Bump, state: State<'a>, _min_indent: u32| {
-        if state.bytes().starts_with(&needle) {
+        if state.bytes().starts_with(bytes) {
             let state = state.advance(2);
             Ok((MadeProgress, (), state))
         } else {

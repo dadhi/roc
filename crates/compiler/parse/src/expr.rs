@@ -2302,7 +2302,7 @@ fn parse_expr_end<'a>(
 
                         patterns.insert(0, loc_pattern);
 
-                        match two_bytes(b'<', b'-', EExpr::BackpassArrow).parse(
+                        match two_bytes(b"<-", EExpr::BackpassArrow).parse(
                             arena,
                             state.clone(),
                             min_indent,
@@ -2581,35 +2581,49 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let start_indent = state.line_indent();
         let p1_indent = start_indent;
         let p2_indent = start_indent + 1;
-
-        let (_p1, (), state) = byte_indent_closure_def_start().parse(arena, state, p1_indent)?;
-
-        let (_p1, param_patterns, state) = sep_by1_e(
-            byte(b',', EClosure::Comma),
-            space0_around_ee(
-                specialize_err(EClosure::Pattern, closure_param()),
-                EClosure::IndentArg,
-                EClosure::IndentArrow,
-            ),
-            EClosure::Arg,
-        )
-        .parse(arena, state, p2_indent)?;
-
-        let (p1, _, state) =
-            two_bytes(b'-', b'>', EClosure::Arrow).parse(arena, state, p2_indent)?;
-
-        match space0_before_e(
-            specialize_err_ref(EClosure::Body, expr_start(options)),
-            EClosure::IndentBody,
-        )
-        .parse(arena, state, p2_indent)
-        {
-            Ok((p2, body, state)) => Ok((
-                p1.or(p2),
-                Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(body)),
-                state,
-            )),
-            Err((p2, fail)) => Err((p1.or(p2), fail)),
+        match byte_indent_closure_def_start().parse(arena, state, p1_indent) {
+            Ok((p1, (), state)) => {
+                match (move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+                    match sep_by1_e(
+                        byte(b',', EClosure::Comma),
+                        space0_around_ee(
+                            specialize_err(EClosure::Pattern, closure_param()),
+                            EClosure::IndentArg,
+                            EClosure::IndentArrow,
+                        ),
+                        EClosure::Arg,
+                    )
+                    .parse(arena, state, min_indent)
+                    {
+                        Ok((_p1, out1, state)) => {
+                            match two_bytes(b"->", EClosure::Arrow).parse(arena, state, min_indent)
+                            {
+                                Ok((p1, _, state)) => match space0_before_e(
+                                    specialize_err_ref(EClosure::Body, expr_start(options)),
+                                    EClosure::IndentBody,
+                                )
+                                .parse(arena, state, min_indent)
+                                {
+                                    Ok((p2, out2, state)) => Ok((p1.or(p2), (out1, out2), state)),
+                                    Err((p2, fail)) => Err((p1.or(p2), fail)),
+                                },
+                                Err((progress, fail)) => Err((progress, fail)),
+                            }
+                        }
+                        Err((progress, fail)) => Err((progress, fail)),
+                    }
+                })
+                .parse(arena, state, p2_indent)
+                {
+                    Ok((p2, out2, state)) => Ok((
+                        p1.or(p2),
+                        Expr::Closure(out2.0.into_bump_slice(), arena.alloc(out2.1)),
+                        state,
+                    )),
+                    Err((p2, fail)) => Err((p1.or(p2), fail)),
+                }
+            }
+            Err((progress, fail)) => Err((progress, fail)),
         }
     }
 }
@@ -2833,7 +2847,7 @@ mod when {
     fn branch_result<'a>(indent: u32) -> impl Parser<'a, Loc<Expr<'a>>, EWhen<'a>> {
         move |arena, state, _min_indent| {
             skip_first!(
-                two_bytes(b'-', b'>', EWhen::Arrow),
+                two_bytes(b"->", EWhen::Arrow),
                 space0_before_e(
                     specialize_err_ref(EWhen::Branch, loc_expr(true)),
                     EWhen::IndentBranch,
@@ -3252,7 +3266,7 @@ fn record_field_expr<'a>() -> impl Parser<'a, RecordFieldExpr<'a>, ERecord<'a>> 
             spaces(),
             either!(
                 and!(
-                    two_bytes(b'<', b'-', ERecord::Arrow),
+                    two_bytes(b"<-", ERecord::Arrow),
                     spaces_before(specialize_err_ref(ERecord::Expr, loc_expr(false)))
                 ),
                 specialize_err_ref(ERecord::Expr, loc_expr(false))

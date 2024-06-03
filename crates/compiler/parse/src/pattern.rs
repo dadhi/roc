@@ -290,7 +290,7 @@ fn three_list_rest_pattern_error<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, PLis
 fn list_rest_pattern<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, PList<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
         let (_, loc_word, state) =
-            loc!(two_bytes(b'.', b'.', PList::Open)).parse(arena, state, min_indent)?;
+            loc!(two_bytes(b"..", PList::Open)).parse(arena, state, min_indent)?;
 
         let no_as = Loc::at(loc_word.region, Pattern::ListRest(None));
 

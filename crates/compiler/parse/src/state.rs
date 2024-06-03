@@ -57,8 +57,8 @@ impl<'a> State<'a> {
     }
 
     pub fn original_bytes_at_offset(&self) -> &'a [u8] {
-        dbg!(self.offset);
-        dbg!(String::from_utf8(self.original_bytes[self.offset..].to_vec()).unwrap());
+        // dbg!(self.offset);
+        // dbg!(String::from_utf8(self.original_bytes[self.offset..].to_vec()).unwrap());
         &self.original_bytes[self.offset..]
     }
 

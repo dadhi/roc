@@ -14,11 +14,11 @@ use crate::ident::{
 };
 use crate::module::module_name_help;
 use crate::parser::{
-    self, backtrackable, byte, byte_indent_closure_def_start, increment_min_indent,
-    line_min_indent, optional, reset_min_indent, sep_by1, sep_by1_e, set_min_indent,
-    specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr, EIf, EImport,
-    EImportParams, EInParens, EList, ENumber, EPattern, ERecord, EString, EType, EWhen, Either,
-    ParseResult, Parser,
+    self, backtrackable, byte, byte_indent_closure_slash, increment_min_indent, line_min_indent,
+    optional, reset_min_indent, sep_by1, sep_by1_e, set_min_indent, specialize_err,
+    specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams,
+    EInParens, EList, ENumber, EPattern, ERecord, EString, EType, EWhen, Either, ParseResult,
+    Parser,
 };
 use crate::pattern::{closure_param, loc_implements_parser};
 use crate::state::State;
@@ -2576,54 +2576,47 @@ pub fn parse_top_level_defs<'a>(
 // PARSER HELPERS
 
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
-    // closure_help_help(options)
     move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
-        let p1_indent = start_indent;
-        let p2_indent = start_indent + 1;
-        match byte_indent_closure_def_start().parse(arena, state, p1_indent) {
-            Ok((p1, (), state)) => {
-                match (move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-                    match sep_by1_e(
-                        byte(b',', EClosure::Comma),
-                        space0_around_ee(
-                            specialize_err(EClosure::Pattern, closure_param()),
-                            EClosure::IndentArg,
-                            EClosure::IndentArrow,
-                        ),
-                        EClosure::Arg,
-                    )
-                    .parse(arena, state, min_indent)
-                    {
-                        Ok((_p1, out1, state)) => {
-                            match two_bytes(b"->", EClosure::Arrow).parse(arena, state, min_indent)
-                            {
-                                Ok((p1, _, state)) => match space0_before_e(
-                                    specialize_err_ref(EClosure::Body, expr_start(options)),
-                                    EClosure::IndentBody,
-                                )
-                                .parse(arena, state, min_indent)
-                                {
-                                    Ok((p2, out2, state)) => Ok((p1.or(p2), (out1, out2), state)),
-                                    Err((p2, fail)) => Err((p1.or(p2), fail)),
-                                },
-                                Err((progress, fail)) => Err((progress, fail)),
-                            }
-                        }
-                        Err((progress, fail)) => Err((progress, fail)),
-                    }
-                })
-                .parse(arena, state, p2_indent)
+        let one_byte_indent = start_indent + 1;
+        let (p1, (), state) = byte_indent_closure_slash().parse(arena, state, start_indent)?;
+
+        match (
+            // level 2 closure
+            move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+                let (_p, param_patterns, state) = sep_by1_e(
+                    byte(b',', EClosure::Comma),
+                    space0_around_ee(
+                        specialize_err(EClosure::Pattern, closure_param()),
+                        EClosure::IndentArg,
+                        EClosure::IndentArrow,
+                    ),
+                    EClosure::Arg,
+                )
+                .parse(arena, state, min_indent)?;
+
+                let (p1, _, state) =
+                    two_bytes(b"->", EClosure::Arrow).parse(arena, state, min_indent)?;
+
+                match space0_before_e(
+                    specialize_err_ref(EClosure::Body, expr_start(options)),
+                    EClosure::IndentBody,
+                )
+                .parse(arena, state, min_indent)
                 {
-                    Ok((p2, out2, state)) => Ok((
-                        p1.or(p2),
-                        Expr::Closure(out2.0.into_bump_slice(), arena.alloc(out2.1)),
-                        state,
-                    )),
+                    Ok((p2, out2, state)) => Ok((p1.or(p2), (param_patterns, out2), state)),
                     Err((p2, fail)) => Err((p1.or(p2), fail)),
                 }
             }
-            Err((progress, fail)) => Err((progress, fail)),
+        )
+        .parse(arena, state, one_byte_indent)
+        {
+            Ok((p2, out2, state)) => Ok((
+                p1.or(p2),
+                Expr::Closure(out2.0.into_bump_slice(), arena.alloc(out2.1)),
+                state,
+            )),
+            Err((p2, fail)) => Err((p1.or(p2), fail)),
         }
     }
 }

@@ -2124,7 +2124,7 @@ where
 /// assert_eq!(problem, EClosure::Start(Position::zero()));
 ///
 /// ```
-pub fn byte_indent_closure_def_start<'a>() -> impl Parser<'a, (), EClosure<'a>> {
+pub fn byte_indent_closure_slash<'a>() -> impl Parser<'a, (), EClosure<'a>> {
     move |_arena: &'a Bump, state: State<'a>, min_indent: u32| {
         if min_indent > state.column() {
             return Err((NoProgress, EClosure::Start(state.pos())));
@@ -2151,7 +2151,7 @@ pub fn byte_indent_closure_def_start<'a>() -> impl Parser<'a, (), EClosure<'a>> 
 #[test]
 fn parse_closure_def_start() {
     let arena = Bump::new();
-    let parser = byte_indent_closure_def_start();
+    let parser = byte_indent_closure_slash();
 
     let text = b"\\x -> Num.add x 42";
     let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
@@ -2165,7 +2165,7 @@ fn parse_closure_def_start() {
 #[test]
 fn parse_closure_pipe() {
     let arena = Bump::new();
-    let parser = byte_indent_closure_def_start();
+    let parser = byte_indent_closure_slash();
 
     let text = b"\\> Num.add 42";
     let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
@@ -2179,7 +2179,7 @@ fn parse_closure_pipe() {
 #[test]
 fn parse_closure_def_start_failed() {
     let arena = Bump::new();
-    let parser = byte_indent_closure_def_start();
+    let parser = byte_indent_closure_slash();
 
     let text = b"hello";
     let (progress, problem) = parser.parse(&arena, State::new(text), 0).unwrap_err();

@@ -2574,50 +2574,41 @@ pub fn parse_top_level_defs<'a>(
 }
 
 // PARSER HELPERS
-
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
-        let one_byte_indent = start_indent + 1;
-        let (p1, (), state) = byte_indent_closure_slash().parse(arena, state, start_indent)?;
+        let (closure_slash_progress, (), state) =
+            byte_indent_closure_slash().parse(arena, state, start_indent)?;
 
-        match (
-            // level 2 closure
-            move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-                let (_p, param_patterns, state) = sep_by1_e(
-                    byte(b',', EClosure::Comma),
-                    space0_around_ee(
-                        specialize_err(EClosure::Pattern, closure_param()),
-                        EClosure::IndentArg,
-                        EClosure::IndentArrow,
-                    ),
-                    EClosure::Arg,
-                )
-                .parse(arena, state, min_indent)?;
-
-                let (p1, _, state) =
-                    two_bytes(b"->", EClosure::Arrow).parse(arena, state, min_indent)?;
-
-                match space0_before_e(
-                    specialize_err_ref(EClosure::Body, expr_start(options)),
-                    EClosure::IndentBody,
-                )
-                .parse(arena, state, min_indent)
-                {
-                    Ok((p2, out2, state)) => Ok((p1.or(p2), (param_patterns, out2), state)),
-                    Err((p2, fail)) => Err((p1.or(p2), fail)),
-                }
-            }
+        let next_byte_indent = start_indent + 1;
+        let (_, param_patterns, state) = sep_by1_e(
+            byte(b',', EClosure::Comma),
+            space0_around_ee(
+                specialize_err(EClosure::Pattern, closure_param()),
+                EClosure::IndentArg,
+                EClosure::IndentArrow,
+            ),
+            EClosure::Arg,
         )
-        .parse(arena, state, one_byte_indent)
-        {
-            Ok((p2, out2, state)) => Ok((
-                p1.or(p2),
-                Expr::Closure(out2.0.into_bump_slice(), arena.alloc(out2.1)),
-                state,
-            )),
-            Err((p2, fail)) => Err((p1.or(p2), fail)),
-        }
+        .parse(arena, state, next_byte_indent)
+        .map_err(|(p, err)| (closure_slash_progress.or(p), err))?;
+
+        let (closure_arrow_progress, _, state) = two_bytes(b"->", EClosure::Arrow)
+            .parse(arena, state, next_byte_indent)
+            .map_err(|(p, err)| (closure_slash_progress.or(p), err))?;
+
+        let (p, body, state) = space0_before_e(
+            specialize_err_ref(EClosure::Body, expr_start(options)),
+            EClosure::IndentBody,
+        )
+        .parse(arena, state, next_byte_indent)
+        .map_err(|(p, err)| (closure_arrow_progress.or(p), err))?;
+
+        Ok((
+            closure_arrow_progress.or(p),
+            Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(body)),
+            state,
+        ))
     }
 }
 

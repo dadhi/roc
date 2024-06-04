@@ -2577,27 +2577,74 @@ pub fn parse_top_level_defs<'a>(
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
-        let (closure_slash_progress, (), state) =
+        let (slash_progress, (), state) =
             byte_indent_closure_slash().parse(arena, state, start_indent)?;
 
-        let next_byte_indent = start_indent + 1;
+        // todo: @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
+
+        let closure_min_indent = start_indent + 1;
 
         let param_parser = specialize_err(EClosure::Pattern, closure_param());
-        let (_, param_patterns, state) = sep_by1_e(
-            byte(b',', EClosure::Comma),
-            space0_around_ee(param_parser, EClosure::IndentArg, EClosure::IndentArrow),
-            EClosure::Arg,
-        )
-        .parse(arena, state, next_byte_indent)
-        .map_err(|(p, err)| (closure_slash_progress.or(p), err))?;
+        let param_parser_ident =
+            space0_around_ee(param_parser, EClosure::IndentArg, EClosure::IndentArrow);
+
+        let param_delim = byte(b',', EClosure::Comma);
+
+        let param_start_pos = state.pos();
+        let param_start_bytes_len = state.bytes().len();
+
+        let (progress, first_param_pattern, param_state) = param_parser_ident
+            .parse(arena, state, closure_min_indent)
+            .map_err(|err| match err {
+                (NoProgress, _) => (slash_progress, EClosure::Arg(param_start_pos)),
+                _ => err,
+            })?;
+        debug_assert_eq!(progress, MadeProgress);
+        let mut param_state = param_state;
+        let mut patterns_vec = Vec::with_capacity_in(1, arena);
+        patterns_vec.push(first_param_pattern);
+
+        let parse_res;
+        loop {
+            let before_param_delim_state = param_state.clone();
+            match param_delim.parse(arena, param_state, closure_min_indent) {
+                Ok((_, (), delim_state)) => {
+                    let delim_pos = delim_state.pos();
+                    let (_, next_pattern, next_state) = param_parser_ident
+                        .parse(arena, delim_state, closure_min_indent)
+                        .map_err(|err| match err {
+                            (NoProgress, _) => (slash_progress, EClosure::Arg(delim_pos)),
+                            _ => err,
+                        })?;
+                    param_state = next_state;
+                    patterns_vec.push(next_pattern);
+                }
+                Err((NoProgress, _)) => {
+                    let progress = Progress::from_lengths(
+                        param_start_bytes_len,
+                        before_param_delim_state.bytes().len(),
+                    );
+                    parse_res = Ok((progress, patterns_vec, before_param_delim_state));
+                    break;
+                }
+                Err(err) => {
+                    // fail if the delimiter made progress
+                    parse_res = Err(err);
+                    break;
+                }
+            }
+        }
+
+        // todo: @wip use pattern directly
+        let (_, param_patterns, state) = parse_res?;
 
         let (closure_arrow_progress, _, state) = two_bytes(b"->", EClosure::Arrow)
-            .parse(arena, state, next_byte_indent)
-            .map_err(|(p, err)| (closure_slash_progress.or(p), err))?;
+            .parse(arena, state, closure_min_indent)
+            .map_err(|(p, err)| (slash_progress.or(p), err))?;
 
         let body_parser = specialize_err_ref(EClosure::Body, expr_start(options));
         let (p, body, state) = space0_before_e(body_parser, EClosure::IndentBody)
-            .parse(arena, state, next_byte_indent)
+            .parse(arena, state, closure_min_indent)
             .map_err(|(p, err)| (closure_arrow_progress.or(p), err))?;
 
         Ok((

@@ -2581,13 +2581,11 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             byte_indent_closure_slash().parse(arena, state, start_indent)?;
 
         let next_byte_indent = start_indent + 1;
+
+        let param_parser = specialize_err(EClosure::Pattern, closure_param());
         let (_, param_patterns, state) = sep_by1_e(
             byte(b',', EClosure::Comma),
-            space0_around_ee(
-                specialize_err(EClosure::Pattern, closure_param()),
-                EClosure::IndentArg,
-                EClosure::IndentArrow,
-            ),
+            space0_around_ee(param_parser, EClosure::IndentArg, EClosure::IndentArrow),
             EClosure::Arg,
         )
         .parse(arena, state, next_byte_indent)
@@ -2597,12 +2595,10 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             .parse(arena, state, next_byte_indent)
             .map_err(|(p, err)| (closure_slash_progress.or(p), err))?;
 
-        let (p, body, state) = space0_before_e(
-            specialize_err_ref(EClosure::Body, expr_start(options)),
-            EClosure::IndentBody,
-        )
-        .parse(arena, state, next_byte_indent)
-        .map_err(|(p, err)| (closure_arrow_progress.or(p), err))?;
+        let body_parser = specialize_err_ref(EClosure::Body, expr_start(options));
+        let (p, body, state) = space0_before_e(body_parser, EClosure::IndentBody)
+            .parse(arena, state, next_byte_indent)
+            .map_err(|(p, err)| (closure_arrow_progress.or(p), err))?;
 
         Ok((
             closure_arrow_progress.or(p),

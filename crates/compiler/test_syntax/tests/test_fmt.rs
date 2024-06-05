@@ -4788,7 +4788,7 @@ mod test_fmt {
             ),
             indoc!(
                 r"
-                list = List.map [1, 2, 3] \a__ -> \a__ |> Num.add 1
+                list = List.map [1, 2, 3] \o__ -> \o__ |> Num.add 1
 
                 list
                 "

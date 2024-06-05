@@ -5,7 +5,7 @@ use crate::parser::Progress;
 
 pub const CLOSURE_PIPE_SUGAR: &[u8] = b"\\>";
 pub const CLOSURE_PIPE_SUGAR_LEN: usize = CLOSURE_PIPE_SUGAR.len();
-pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\a__ -> a__ |>";
+pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\0__ -> o__ |>";
 pub const CLOSURE_PIPE_DESUGAR_LEN: usize = CLOSURE_PIPE_DESUGAR.len();
 
 /// A position in a source file.

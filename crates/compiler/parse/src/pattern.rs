@@ -30,16 +30,18 @@ pub fn closure_param<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     one_of!(
         // An ident is the most common param, e.g. \foo -> ...
         loc_ident_pattern_help(true),
-        // Underscore is also common, e.g. \_ -> ...
-        loc!(underscore_pattern_help()),
-        // You can destructure records in params, e.g. \{ x, y } -> ...
-        loc!(specialize_err(
-            EPattern::Record,
-            crate::pattern::record_pattern_help()
-        )),
-        // If you wrap it in parens, you can match any arbitrary pattern at all.
-        // e.g. \User.UserId userId -> ...
-        specialize_err(EPattern::PInParens, loc_pattern_in_parens_help())
+        one_of!(
+            // Underscore is also common, e.g. \_ -> ...
+            loc!(underscore_pattern_help()),
+            // You can destructure records in params, e.g. \{ x, y } -> ...
+            loc!(specialize_err(
+                EPattern::Record,
+                map!(record_pattern_fields(), Pattern::RecordDestructure) // crate::pattern::record_pattern_help()
+            )),
+            // If you wrap it in parens, you can match any arbitrary pattern at all.
+            // e.g. \User.UserId userId -> ...
+            specialize_err(EPattern::PInParens, loc_pattern_in_parens_help())
+        )
     )
 }
 
@@ -450,20 +452,17 @@ fn loc_ident_pattern_help<'a>(
 }
 
 fn underscore_pattern_help<'a>() -> impl Parser<'a, Pattern<'a>, EPattern<'a>> {
-    map!(
-        skip_first!(
-            byte(b'_', EPattern::Underscore),
-            optional(lowercase_ident_pattern())
-        ),
-        |output| match output {
-            Some(name) => Pattern::Underscore(name),
-            None => Pattern::Underscore(""),
-        }
-    )
-}
+    move |arena, state, min_indent| {
+        let (underscore_p, _, state) =
+            byte(b'_', EPattern::Underscore).parse(arena, state, min_indent)?;
 
-fn lowercase_ident_pattern<'a>() -> impl Parser<'a, &'a str, EPattern<'a>> {
-    specialize_err(move |_, pos| EPattern::End(pos), lowercase_ident())
+        let original_state = state.clone();
+        match lowercase_ident().parse(arena, state, min_indent) {
+            Ok((p2, name, state)) => Ok((underscore_p.or(p2), Pattern::Underscore(name), state)),
+            Err((NoProgress, _)) => Ok((underscore_p, Pattern::Underscore(""), original_state)),
+            Err((MadeProgress, _)) => Err((MadeProgress, EPattern::End(original_state.pos()))),
+        }
+    }
 }
 
 #[inline(always)]

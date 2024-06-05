@@ -15,10 +15,9 @@ use crate::ident::{
 use crate::module::module_name_help;
 use crate::parser::{
     self, backtrackable, byte, byte_indent_closure_slash, increment_min_indent, line_min_indent,
-    optional, reset_min_indent, sep_by1, sep_by1_e, set_min_indent, specialize_err,
-    specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams,
-    EInParens, EList, ENumber, EPattern, ERecord, EString, EType, EWhen, Either, ParseResult,
-    Parser,
+    optional, reset_min_indent, sep_by1, set_min_indent, specialize_err, specialize_err_ref, then,
+    two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber,
+    EPattern, ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
 };
 use crate::pattern::{closure_param, loc_implements_parser};
 use crate::state::State;
@@ -2580,7 +2579,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let (slash_progress, (), state) =
             byte_indent_closure_slash().parse(arena, state, start_indent)?;
 
-        // todo: @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
+        // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
 
         let closure_min_indent = start_indent + 1;
 

@@ -2588,11 +2588,9 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let param_parser_ident =
             space0_around_ee(param_parser, EClosure::IndentArg, EClosure::IndentArrow);
 
-        let param_delim = byte(b',', EClosure::Comma);
-
         let param_start_pos = state.pos();
 
-        let (progress, first_param_pattern, param_state) = param_parser_ident
+        let (progress, first_param_pattern, first_param_state) = param_parser_ident
             .parse(arena, state, closure_min_indent)
             .map_err(|err| match err {
                 (NoProgress, _) => (slash_progress, EClosure::Arg(param_start_pos)),
@@ -2600,16 +2598,13 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             })?;
         debug_assert_eq!(progress, MadeProgress);
 
-        let mut param_state = param_state;
         let mut param_patterns = Vec::with_capacity_in(1, arena);
         param_patterns.push(first_param_pattern);
 
+        let mut param_state = first_param_state;
         loop {
             let before_param_delim_state = param_state.clone();
 
-            // parse the param delimiter, it is inlined it here,
-            // because in the context we have only Some or None state to handle, instead of generic Result,
-            // so we avoid handling the impossible state of Err(MadeProgress, _)
             match param_state.bytes().first() {
                 Some(b) if *b == b',' => {
                     let delim_state = param_state.advance(1);

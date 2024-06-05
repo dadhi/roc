@@ -2607,8 +2607,12 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         loop {
             let before_param_delim_state = param_state.clone();
 
-            match param_delim.parse(arena, param_state, closure_min_indent) {
-                Ok((_, (), delim_state)) => {
+            // parse the param delimiter, it is inlined it here,
+            // because in the context we have only Some or None state to handle, instead of generic Result,
+            // so we avoid handling the impossible state of Err(MadeProgress, _)
+            match param_state.bytes().first() {
+                Some(b) if *b == b',' => {
+                    let delim_state = param_state.advance(1);
                     let delim_pos = delim_state.pos();
                     let (_, next_pattern, next_state) = param_parser_ident
                         .parse(arena, delim_state, closure_min_indent)
@@ -2619,13 +2623,10 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
                     param_patterns.push(next_pattern);
                     param_state = next_state;
                 }
-                Err((NoProgress, _)) => {
+                _ => {
+                    // done when there are no next delimiter and restore the state
                     param_state = before_param_delim_state;
                     break;
-                }
-                Err(err) => {
-                    // fail if the delimiter made progress
-                    return Err(err);
                 }
             }
         }

@@ -2577,7 +2577,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
     move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
         let (slash_progress, (), state) =
-            byte_indent_closure_slash().parse(arena, state, start_indent)?;
+            byte_indent_closure_slash().parse(arena, state, start_indent)?; // TODO @wip inline me
 
         // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
 

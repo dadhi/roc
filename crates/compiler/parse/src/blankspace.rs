@@ -20,13 +20,24 @@ where
     P: 'a + Parser<'a, Loc<S>, E>,
     E: 'a + SpaceProblem,
 {
-    parser::map_with_arena(
-        and(
-            space0_e(indent_before_problem),
-            and(parser, space0_e(indent_after_problem)),
-        ),
-        spaces_around_help,
-    )
+    move |arena, state: State<'a>, min_indent| {
+        let (p_before, ident_before, state) =
+            space0_e(indent_before_problem).parse(arena, state, min_indent)?;
+
+        let (p, p_output, state) = parser
+            .parse(arena, state, min_indent)
+            .map_err(|(p, err)| (p_before.or(p), err))?;
+
+        let (p_after, ident_after, state) = space0_e(indent_after_problem)
+            .parse(arena, state, min_indent)
+            .map_err(|(p_after, err)| (p.or(p_after), err))?;
+
+        Ok((
+            p.or(p_after),
+            spaces_around_help(arena, (ident_before, (p_output, ident_after))),
+            state,
+        ))
+    }
 }
 
 pub fn spaces_around<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>

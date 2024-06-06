@@ -5,7 +5,7 @@ use crate::keyword;
 use crate::parser::Progress::{self, *};
 use crate::parser::{
     self, backtrackable, byte, fail_when, optional, specialize_err, specialize_err_ref, then,
-    three_bytes, two_bytes, EPattern, PInParens, PList, PRecord, Parser,
+    three_bytes, two_bytes, EClosure, EPattern, PInParens, PList, PRecord, Parser,
 };
 use crate::state::State;
 use crate::string_literal::StrLikeLiteral;
@@ -26,7 +26,7 @@ pub enum PatternType {
     WhenBranch,
 }
 
-pub fn closure_param<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+pub fn closure_param_pattern<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EClosure<'a>> {
     move |arena, state: State<'a>, min_indent| {
         let mut res = loc_ident_pattern_help(true).parse(arena, state.clone(), min_indent);
         if let Err((NoProgress, _)) = res {
@@ -38,7 +38,7 @@ pub fn closure_param<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
                 }
             }
         }
-        res
+        res.map_err(|(p, err)| (p, EClosure::Pattern(err, state.pos())))
     }
 }
 
@@ -204,12 +204,10 @@ fn loc_pattern_in_parens_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPatter
                 .parse(arena, state, min_indent)
                 .map_err(|(p, err)| (p, EPattern::PInParens(err, start)))?;
 
-            let region = Region::new(start, next_state.pos());
-
             if elements.len() > 1 {
                 Ok((
                     MadeProgress,
-                    Loc::at(region, Pattern::Tuple(elements)),
+                    Loc::of(start, next_state.pos(), Pattern::Tuple(elements)),
                     next_state,
                 ))
             } else if elements.is_empty() {
@@ -329,18 +327,17 @@ fn loc_ident_pattern_help<'a>(
     can_have_arguments: bool,
 ) -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let original_state = state.clone();
+        let start = state.pos();
 
-        let (_, loc_ident, state) =
-            specialize_err(|_, pos| EPattern::Start(pos), loc!(parse_ident))
-                .parse(arena, state, min_indent)?;
+        let (_, ident, state) = parse_ident
+            .parse(arena, state, min_indent)
+            .map_err(|(p, _)| (p, EPattern::Start(start)))?;
 
-        match loc_ident.value {
+        let ident_region = Region::new(start, state.pos());
+
+        match ident {
             Ident::Tag(tag) => {
-                let loc_tag = Loc {
-                    region: loc_ident.region,
-                    value: Pattern::Tag(tag),
-                };
+                let loc_tag = Loc::at(ident_region, Pattern::Tag(tag));
 
                 // Make sure `Foo Bar 1` is parsed as `Foo (Bar) 1`, and not `Foo (Bar 1)`
                 if can_have_arguments {
@@ -351,7 +348,7 @@ fn loc_ident_pattern_help<'a>(
                         Ok((MadeProgress, loc_tag, state))
                     } else {
                         let region = Region::across_all(
-                            std::iter::once(&loc_ident.region)
+                            std::iter::once(&ident_region)
                                 .chain(loc_args.iter().map(|loc_arg| &loc_arg.region)),
                         );
                         let value =
@@ -364,10 +361,7 @@ fn loc_ident_pattern_help<'a>(
                 }
             }
             Ident::OpaqueRef(name) => {
-                let loc_pat = Loc {
-                    region: loc_ident.region,
-                    value: Pattern::OpaqueRef(name),
-                };
+                let loc_pat = Loc::at(ident_region, Pattern::OpaqueRef(name));
 
                 // Make sure `@Foo Bar 1` is parsed as `@Foo (Bar) 1`, and not `@Foo (Bar 1)`
                 if can_have_arguments {
@@ -378,7 +372,7 @@ fn loc_ident_pattern_help<'a>(
                         Ok((MadeProgress, loc_pat, state))
                     } else {
                         let region = Region::across_all(
-                            std::iter::once(&loc_ident.region)
+                            std::iter::once(&ident_region)
                                 .chain(loc_args.iter().map(|loc_arg| &loc_arg.region)),
                         );
                         let value =
@@ -398,7 +392,7 @@ fn loc_ident_pattern_help<'a>(
 
                 for keyword in crate::keyword::KEYWORDS.iter() {
                     if parts[0] == Accessor::RecordField(keyword) {
-                        return Err((NoProgress, EPattern::End(original_state.pos())));
+                        return Err((NoProgress, EPattern::End(start)));
                     }
                 }
 
@@ -407,7 +401,7 @@ fn loc_ident_pattern_help<'a>(
                         return Ok((
                             MadeProgress,
                             Loc {
-                                region: loc_ident.region,
+                                region: ident_region,
                                 value: Pattern::Identifier { ident: var },
                             },
                             state,
@@ -429,7 +423,7 @@ fn loc_ident_pattern_help<'a>(
                 Ok((
                     MadeProgress,
                     Loc {
-                        region: loc_ident.region,
+                        region: ident_region,
                         value: Pattern::Malformed(malformed_str.into_bump_str()),
                     },
                     state,
@@ -437,17 +431,14 @@ fn loc_ident_pattern_help<'a>(
             }
             Ident::AccessorFunction(_string) => Err((
                 MadeProgress,
-                EPattern::AccessorFunction(loc_ident.region.start()),
+                EPattern::AccessorFunction(ident_region.start()),
             )),
             Ident::Malformed(malformed, problem) => {
                 debug_assert!(!malformed.is_empty());
 
                 Ok((
                     MadeProgress,
-                    Loc {
-                        region: loc_ident.region,
-                        value: Pattern::MalformedIdent(malformed, problem),
-                    },
+                    Loc::at(ident_region, Pattern::MalformedIdent(malformed, problem)),
                     state,
                 ))
             }

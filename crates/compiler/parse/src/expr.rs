@@ -19,7 +19,7 @@ use crate::parser::{
     two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber,
     EPattern, ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
 };
-use crate::pattern::{closure_param, loc_implements_parser};
+use crate::pattern::{closure_param_pattern, loc_implements_parser};
 use crate::state::State;
 use crate::string_literal::{self, StrLikeLiteral};
 use crate::{header, keyword};
@@ -2583,9 +2583,11 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
 
         let closure_min_indent = start_indent + 1;
 
-        let param_parser = specialize_err(EClosure::Pattern, closure_param());
-        let param_parser_ident =
-            space0_around_ee(param_parser, EClosure::IndentArg, EClosure::IndentArrow);
+        let param_parser_ident = space0_around_ee(
+            closure_param_pattern(),
+            EClosure::IndentArg,
+            EClosure::IndentArrow,
+        );
 
         let param_start_pos = state.pos();
 

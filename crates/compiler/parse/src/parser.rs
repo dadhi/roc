@@ -1351,9 +1351,7 @@ macro_rules! loc {
 
             match $parser.parse(arena, state, min_indent) {
                 Ok((progress, value, state)) => {
-                    let end = state.pos();
-                    let region = Region::new(start, end);
-
+                    let region = Region::new(start, state.pos());
                     Ok((progress, Loc { region, value }, state))
                 }
                 Err(err) => Err(err),

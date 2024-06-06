@@ -27,19 +27,19 @@ pub enum PatternType {
 }
 
 pub fn closure_param<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
-    one_of!(
-        // An ident is the most common param, e.g. \foo -> ...
-        loc_ident_pattern_help(true),
-        one_of!(
-            // Underscore is also common, e.g. \_ -> ...
-            loc_underscore_pattern_help(),
-            // You can destructure records in params, e.g. \{ x, y } -> ...
-            loc_record_pattern_help(),
-            // If you wrap it in parens, you can match any arbitrary pattern at all.
-            // e.g. \User.UserId userId -> ...
-            specialize_err(EPattern::PInParens, loc_pattern_in_parens_help())
-        )
-    )
+    move |arena, state: State<'a>, min_indent| {
+        let mut res = loc_ident_pattern_help(true).parse(arena, state.clone(), min_indent);
+        if let Err((NoProgress, _)) = res {
+            res = loc_underscore_pattern_help().parse(arena, state.clone(), min_indent);
+            if let Err((NoProgress, _)) = res {
+                res = loc_record_pattern_help().parse(arena, state.clone(), min_indent);
+                if let Err((NoProgress, _)) = res {
+                    res = loc_pattern_in_parens_help().parse(arena, state.clone(), min_indent)
+                }
+            }
+        }
+        res
+    }
 }
 
 pub fn loc_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
@@ -76,7 +76,7 @@ fn loc_pattern_help_help<'a>(
     can_have_arguments: bool,
 ) -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     one_of!(
-        specialize_err(EPattern::PInParens, loc_pattern_in_parens_help()),
+        loc_pattern_in_parens_help(),
         loc_underscore_pattern_help(),
         loc_ident_pattern_help(can_have_arguments),
         loc_record_pattern_help(),
@@ -184,35 +184,45 @@ pub fn loc_implements_parser<'a>() -> impl Parser<'a, Loc<Implements<'a>>, EPatt
     )
 }
 
-fn loc_pattern_in_parens_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, PInParens<'a>> {
-    then(
-        loc!(collection_trailing_sep_e!(
-            byte(b'(', PInParens::Open),
-            specialize_err_ref(PInParens::Pattern, loc_pattern_help()),
-            byte(b',', PInParens::End),
-            byte(b')', PInParens::End),
-            Pattern::SpaceBefore
-        )),
-        move |_arena, state, _, loc_elements| {
-            let elements = loc_elements.value;
-            let region = loc_elements.region;
+pub fn record_pattern_in_parens_fields<'a>(
+) -> impl Parser<'a, Collection<'a, Loc<Pattern<'a>>>, PInParens<'a>> {
+    collection_trailing_sep_e!(
+        byte(b'(', PInParens::Open),
+        specialize_err_ref(PInParens::Pattern, loc_pattern_help()),
+        byte(b',', PInParens::End),
+        byte(b')', PInParens::End),
+        Pattern::SpaceBefore
+    )
+}
+
+fn loc_pattern_in_parens_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+    {
+        move |arena, state: State<'a>, min_indent| {
+            let start = state.pos();
+
+            let (_, elements, next_state) = record_pattern_in_parens_fields()
+                .parse(arena, state, min_indent)
+                .map_err(|(p, err)| (p, EPattern::PInParens(err, start)))?;
+
+            let region = Region::new(start, next_state.pos());
 
             if elements.len() > 1 {
                 Ok((
                     MadeProgress,
                     Loc::at(region, Pattern::Tuple(elements)),
-                    state,
+                    next_state,
                 ))
             } else if elements.is_empty() {
-                Err((NoProgress, PInParens::Empty(state.pos())))
+                let err = PInParens::Empty(next_state.pos());
+                Err((NoProgress, EPattern::PInParens(err, start)))
             } else {
                 // TODO: don't discard comments before/after
                 // (stored in the Collection)
                 // TODO: add Pattern::ParensAround to faithfully represent the input
-                Ok((MadeProgress, elements.items[0], state))
+                Ok((MadeProgress, elements.items[0], next_state))
             }
-        },
-    )
+        }
+    }
     .trace("pat_in_parens")
 }
 
@@ -448,12 +458,10 @@ fn loc_ident_pattern_help<'a>(
 fn loc_underscore_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     move |arena, state: State<'a>, min_indent| {
         let start = state.pos();
-        let (underscore_p, _, state) =
+        let (underscore_p, _, underscore_state) =
             byte(b'_', EPattern::Underscore).parse(arena, state, min_indent)?;
 
-        let after_underscore = state.pos();
-        let start_state = state.clone();
-        match lowercase_ident().parse(arena, state, min_indent) {
+        match lowercase_ident().parse(arena, underscore_state.clone(), min_indent) {
             Ok((p, name, next_state)) => Ok((
                 underscore_p.or(p),
                 Loc::of(start, next_state.pos(), Pattern::Underscore(name)),
@@ -461,8 +469,8 @@ fn loc_underscore_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPatte
             )),
             Err((NoProgress, _)) => Ok((
                 underscore_p,
-                Loc::of(start, after_underscore, Pattern::Underscore("")),
-                start_state,
+                Loc::of(start, underscore_state.pos(), Pattern::Underscore("")),
+                underscore_state,
             )),
             Err((MadeProgress, _)) => Err((MadeProgress, EPattern::End(start))),
         }

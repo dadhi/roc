@@ -2576,14 +2576,12 @@ pub fn parse_top_level_defs<'a>(
 
 // PARSER HELPERS
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
-    move |arena: &'a bumpalo::Bump, state: State<'a>, _min_indent| {
+    move |arena, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
         let (slash_progress, (), state) =
             byte_indent_closure_slash().parse(arena, state, start_indent)?; // TODO @wip inline me
 
         // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
-
-        let closure_min_indent = start_indent + 1;
 
         let param_parser_ident = space0_around_ee(
             closure_param_pattern(),
@@ -2593,6 +2591,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
 
         let param_start_pos = state.pos();
 
+        let closure_min_indent = start_indent + 1;
         let (progress, first_param_pattern, first_param_state) = param_parser_ident
             .parse(arena, state, closure_min_indent)
             .map_err(|err| match err {
@@ -2604,13 +2603,13 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let mut param_patterns = Vec::with_capacity_in(1, arena);
         param_patterns.push(first_param_pattern);
 
-        let mut param_state = first_param_state;
+        let mut state = first_param_state;
         loop {
-            let before_param_delim_state = param_state.clone();
+            let before_param_delim_state = state.clone();
 
-            match param_state.bytes().first() {
+            match state.bytes().first() {
                 Some(b) if *b == b',' => {
-                    let delim_state = param_state.advance(1);
+                    let delim_state = state.advance(1);
                     let delim_pos = delim_state.pos();
                     let (_, next_pattern, next_state) = param_parser_ident
                         .parse(arena, delim_state, closure_min_indent)
@@ -2619,30 +2618,40 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
                             _ => err,
                         })?;
                     param_patterns.push(next_pattern);
-                    param_state = next_state;
+                    state = next_state;
                 }
                 _ => {
                     // done when there are no next delimiter and restore the state
-                    param_state = before_param_delim_state;
+                    state = before_param_delim_state;
                     break;
                 }
             }
         }
 
-        let (closure_arrow_progress, _, state) = two_bytes(b"->", EClosure::Arrow)
-            .parse(arena, param_state, closure_min_indent)
-            .map_err(|(p, err)| (slash_progress.or(p), err))?;
+        let before_arrow = state.pos();
+        if !state.bytes().starts_with(b"->") {
+            return Err((slash_progress, EClosure::Arrow(before_arrow)));
+        }
+        let state = state.advance(2);
 
-        let body_parser = specialize_err_ref(EClosure::Body, expr_start(options));
-        let (p, body, state) = space0_before_e(body_parser, EClosure::IndentBody)
+        let (ident_p, space_list, state) =
+            space0_e(EClosure::IndentBody).parse(arena, state, closure_min_indent)?;
+
+        let before_body = state.pos();
+        let (_, loc_expr, state) = expr_start(options)
             .parse(arena, state, closure_min_indent)
-            .map_err(|(p, err)| (closure_arrow_progress.or(p), err))?;
+            .map_err(|(p, err)| (ident_p.or(p), EClosure::Body(arena.alloc(err), before_body)))?;
 
-        Ok((
-            closure_arrow_progress.or(p),
-            Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(body)),
-            state,
-        ))
+        let body = if space_list.is_empty() {
+            loc_expr
+        } else {
+            arena
+                .alloc(loc_expr.value)
+                .with_spaces_before(space_list, loc_expr.region)
+        };
+
+        let closure_output = Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(body));
+        Ok((MadeProgress, closure_output, state))
     }
 }
 

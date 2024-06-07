@@ -171,18 +171,24 @@ where
     P: 'a + Parser<'a, Loc<S>, E>,
     E: 'a + SpaceProblem,
 {
-    parser::map_with_arena(
-        and!(space0_e(indent_problem), parser),
-        |arena: &'a Bump, (space_list, loc_expr): (&'a [CommentOrNewline<'a>], Loc<S>)| {
-            if space_list.is_empty() {
-                loc_expr
-            } else {
-                arena
-                    .alloc(loc_expr.value)
-                    .with_spaces_before(space_list, loc_expr.region)
-            }
-        },
-    )
+    move |arena, state: State<'a>, min_indent| {
+        let (ident_p, space_list, state) =
+            space0_e(indent_problem).parse(arena, state, min_indent)?;
+
+        let (_, loc_expr, state) = parser
+            .parse(arena, state, min_indent)
+            .map_err(|(p, err)| (ident_p.or(p), err))?;
+
+        let out = if space_list.is_empty() {
+            loc_expr
+        } else {
+            arena
+                .alloc(loc_expr.value)
+                .with_spaces_before(space_list, loc_expr.region)
+        };
+
+        Ok((MadeProgress, out, state))
+    }
 }
 
 pub fn space0_after_e<'a, P, S, E>(
@@ -341,15 +347,15 @@ where
 {
     move |arena, state: State<'a>, min_indent: u32| {
         let start = state.pos();
-        match spaces().parse(arena, state, min_indent) {
-            Ok((progress, spaces, state)) => {
-                if progress == NoProgress || state.column() >= min_indent {
-                    Ok((progress, spaces, state))
-                } else {
-                    Err((progress, indent_problem(start)))
-                }
-            }
-            Err((progress, err)) => Err((progress, err)),
+
+        let mut newlines = Vec::new_in(arena);
+
+        let (progress, state) = consume_spaces(state, |_, space, _| newlines.push(space))?;
+
+        if progress == NoProgress || state.column() >= min_indent {
+            Ok((progress, newlines.into_bump_slice(), state))
+        } else {
+            Err((progress, indent_problem(start)))
         }
     }
 }

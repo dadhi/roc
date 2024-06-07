@@ -1919,11 +1919,11 @@ where
     Y: 'a,
     X: 'a,
 {
-    move |a, state: State<'a>, min_indent| {
-        let original_state = state.clone();
-        match parser.parse(a, state, min_indent) {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match parser.parse(arena, state, min_indent) {
             Ok(t) => Ok(t),
-            Err((p, error)) => Err((p, map_error(a.alloc(error), original_state.pos()))),
+            Err((p, error)) => Err((p, map_error(arena.alloc(error), start))),
         }
     }
 }

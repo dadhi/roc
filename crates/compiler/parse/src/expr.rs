@@ -14,10 +14,10 @@ use crate::ident::{
 };
 use crate::module::module_name_help;
 use crate::parser::{
-    self, backtrackable, byte, byte_indent_closure_slash, increment_min_indent, line_min_indent,
-    optional, reset_min_indent, sep_by1, set_min_indent, specialize_err, specialize_err_ref, then,
-    two_bytes, EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber,
-    EPattern, ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
+    self, backtrackable, byte, byte_indent_closure_slash, increment_min_indent, optional,
+    reset_min_indent, sep_by1, set_min_indent, specialize_err, specialize_err_ref, then, two_bytes,
+    EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber, EPattern,
+    ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
 };
 use crate::pattern::{closure_param_pattern, loc_implements_parser};
 use crate::state::State;
@@ -370,7 +370,9 @@ fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, E
 }
 
 fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
-    line_min_indent(move |arena, state: State<'a>, min_indent: u32| {
+    move |arena, state: State<'a>, min_indent: u32| {
+        let min_indent = std::cmp::max(state.line_indent(), min_indent);
+
         let (_, expr, state) =
             loc_possibly_negative_or_negated_term(options).parse(arena, state, min_indent)?;
 
@@ -421,7 +423,7 @@ fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a
                 }
             }
         }
-    })
+    }
 }
 
 #[derive(Debug)]
@@ -2161,12 +2163,13 @@ fn parse_expr_end<'a>(
     state: State<'a>,
     initial_state: State<'a>,
 ) -> ParseResult<'a, Expr<'a>, EExpr<'a>> {
-    let parser = skip_first!(
-        crate::blankspace::check_indent(EExpr::IndentEnd),
-        loc_term_or_underscore(options)
-    );
+    let term_or_underscore = if state.column() >= min_indent {
+        loc_term_or_underscore(options).parse(arena, state.clone(), min_indent)
+    } else {
+        Err((NoProgress, EExpr::IndentEnd(state.pos())))
+    };
 
-    match parser.parse(arena, state.clone(), min_indent) {
+    match term_or_underscore {
         Err((MadeProgress, f)) => Err((MadeProgress, f)),
         Ok((
             _,

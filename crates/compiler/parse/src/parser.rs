@@ -1825,16 +1825,6 @@ where
     move |arena, state, min_indent| parser.parse(arena, state, min_indent + 1)
 }
 
-pub fn line_min_indent<'a, P, T, X: 'a>(parser: P) -> impl Parser<'a, T, X>
-where
-    P: Parser<'a, T, X>,
-{
-    move |arena, state: State<'a>, min_indent| {
-        let min_indent = std::cmp::max(state.line_indent(), min_indent);
-        parser.parse(arena, state, min_indent)
-    }
-}
-
 pub fn absolute_column_min_indent<'a, P, T, X: 'a>(parser: P) -> impl Parser<'a, T, X>
 where
     P: Parser<'a, T, X>,

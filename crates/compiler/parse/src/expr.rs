@@ -2592,12 +2592,11 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let param_start_pos = state.pos();
 
         let closure_min_indent = start_indent + 1;
-        let (progress, first_param_pattern, first_param_state) = param_parser_ident
-            .parse(arena, state, closure_min_indent)
-            .map_err(|err| match err {
-                (NoProgress, _) => (slash_progress, EClosure::Arg(param_start_pos)),
-                _ => err,
-            })?;
+        let (progress, first_param_pattern, first_param_state) =
+            match param_parser_ident.parse(arena, state, closure_min_indent) {
+                Err((NoProgress, _)) => Err((slash_progress, EClosure::Arg(param_start_pos))),
+                res => res,
+            }?;
         debug_assert_eq!(progress, MadeProgress);
 
         let mut param_patterns = Vec::with_capacity_in(1, arena);
@@ -2611,12 +2610,11 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
                 Some(b) if *b == b',' => {
                     let delim_state = state.advance(1);
                     let delim_pos = delim_state.pos();
-                    let (_, next_pattern, next_state) = param_parser_ident
-                        .parse(arena, delim_state, closure_min_indent)
-                        .map_err(|err| match err {
-                            (NoProgress, _) => (slash_progress, EClosure::Arg(delim_pos)),
-                            _ => err,
-                        })?;
+                    let (_, next_pattern, next_state) =
+                        match param_parser_ident.parse(arena, delim_state, closure_min_indent) {
+                            Err((NoProgress, _)) => Err((slash_progress, EClosure::Arg(delim_pos))),
+                            res => res,
+                        }?;
                     param_patterns.push(next_pattern);
                     state = next_state;
                 }

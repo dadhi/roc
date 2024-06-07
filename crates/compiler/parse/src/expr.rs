@@ -304,10 +304,6 @@ fn loc_possibly_negative_or_negated_term<'a>(
     ]
 }
 
-fn fail_expr_start_e<'a, T: 'a>() -> impl Parser<'a, T, EExpr<'a>> {
-    |_arena, state: State<'a>, _min_indent: u32| Err((NoProgress, EExpr::Start(state.pos())))
-}
-
 fn unary_negate<'a>() -> impl Parser<'a, (), EExpr<'a>> {
     move |_arena: &'a Bump, state: State<'a>, _min_indent: u32| {
         // a minus is unary iff

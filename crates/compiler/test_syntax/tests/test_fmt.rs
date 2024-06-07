@@ -4777,6 +4777,15 @@ mod test_fmt {
     }
 
     #[test]
+    fn simple_closure_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                \o__ -> o__ |> Num.add 1
+            "
+        ));
+    }
+
+    #[test]
     fn func_call_trailing_lambda_pipe_sugar() {
         expr_formats_to(
             indoc!(

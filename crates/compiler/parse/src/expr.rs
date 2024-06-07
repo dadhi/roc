@@ -332,16 +332,44 @@ fn unary_negate<'a>() -> impl Parser<'a, (), EExpr<'a>> {
 }
 
 fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    one_of![
-        loc!(specialize_err(EExpr::If, if_expr_help(options))),
-        loc!(specialize_err(EExpr::When, when::expr_help(options))),
-        loc!(specialize_err(EExpr::Expect, expect_help(options))),
-        loc!(specialize_err(EExpr::Dbg, dbg_help(options))),
-        loc!(import_help(options)),
-        loc!(specialize_err(EExpr::Closure, closure_help(options))),
-        loc!(expr_operator_chain(options)),
-        fail_expr_start_e()
-    ]
+    (move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match if_expr_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::If(err, start))),
+            Err(_) => {}
+        };
+        match when::expr_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::When(err, start))),
+            Err(_) => {}
+        };
+        match expect_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Expect(err, start))),
+            Err(_) => {}
+        };
+        match dbg_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Dbg(err, start))),
+            Err(_) => {}
+        };
+        match import_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match closure_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err(_) => {}
+        };
+        match expr_operator_chain(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => return Err((NoProgress, EExpr::Start(start))),
+        }
+    })
     .trace("expr_start")
 }
 
@@ -389,7 +417,7 @@ fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a
                             let mut defs = Defs::default();
                             defs.push_value_def(value_def, def_region, &[], &[]);
 
-                            return parse_defs_expr(options, min_indent, defs, arena, new_state);
+                            parse_defs_expr(options, min_indent, defs, arena, new_state)
                         } else {
                             Ok((progress, expr, new_state))
                         }
@@ -3024,16 +3052,18 @@ fn if_expr_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EIf<
             }
         };
 
-        let (_, else_branch, state) = space0_before_e(
+        match space0_before_e(
             specialize_err_ref(EIf::ElseBranch, expr_start(options)),
             EIf::IndentElseBranch,
         )
         .parse(arena, state_final_else, min_indent)
-        .map_err(|(_, f)| (MadeProgress, f))?;
-
-        let expr = Expr::If(branches.into_bump_slice(), arena.alloc(else_branch));
-
-        Ok((MadeProgress, expr, state))
+        {
+            Ok((_, else_branch, state)) => {
+                let expr = Expr::If(branches.into_bump_slice(), arena.alloc(else_branch));
+                Ok((MadeProgress, expr, state))
+            }
+            Err((_, f)) => Err((MadeProgress, f)),
+        }
     }
 }
 

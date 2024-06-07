@@ -38,7 +38,10 @@ pub fn closure_param_pattern<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EClosure
                 }
             }
         }
-        res.map_err(|(p, err)| (p, EClosure::Pattern(err, state.pos())))
+        match res {
+            Err((p, err)) => Err((p, EClosure::Pattern(err, state.pos()))),
+            Ok(ok) => Ok(ok),
+        }
     }
 }
 

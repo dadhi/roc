@@ -2578,8 +2578,23 @@ pub fn parse_top_level_defs<'a>(
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     move |arena, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
-        let (slash_progress, (), state) =
-            byte_indent_closure_slash().parse(arena, state, start_indent)?; // TODO @wip inline me
+
+        if start_indent > state.column() {
+            return Err((NoProgress, EClosure::Start(state.pos())));
+        }
+
+        let (slash_progress, (), state) = if state.original_bytes_at_offset().starts_with(b"\\>") {
+            let state = state.activate_closure_pipe_desugar();
+            Ok((MadeProgress, (), state))
+        } else {
+            match state.bytes().first() {
+                Some(x) if *x == b'\\' => {
+                    let state = state.advance_original_bytes(1);
+                    Ok((MadeProgress, (), state))
+                }
+                _ => Err((NoProgress, EClosure::Start(state.pos()))),
+            }
+        }?;
 
         // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
 
@@ -2636,9 +2651,11 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             space0_e(EClosure::IndentBody).parse(arena, state, closure_min_indent)?;
 
         let before_body = state.pos();
-        let (_, loc_expr, state) = expr_start(options)
-            .parse(arena, state, closure_min_indent)
-            .map_err(|(p, err)| (ident_p.or(p), EClosure::Body(arena.alloc(err), before_body)))?;
+        let (_, loc_expr, state) = match expr_start(options).parse(arena, state, closure_min_indent)
+        {
+            Err((p, err)) => Err((ident_p.or(p), EClosure::Body(arena.alloc(err), before_body))),
+            Ok(ok) => Ok(ok),
+        }?;
 
         let body = if space_list.is_empty() {
             loc_expr

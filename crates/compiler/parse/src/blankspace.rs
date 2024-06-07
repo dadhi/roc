@@ -24,13 +24,16 @@ where
         let (p_before, ident_before, state) =
             space0_e(indent_before_problem).parse(arena, state, min_indent)?;
 
-        let (p, p_output, state) = parser
-            .parse(arena, state, min_indent)
-            .map_err(|(p, err)| (p_before.or(p), err))?;
+        let (p, p_output, state) = match parser.parse(arena, state, min_indent) {
+            Err((p, err)) => Err((p_before.or(p), err)),
+            res => res,
+        }?;
 
-        let (p_after, ident_after, state) = space0_e(indent_after_problem)
-            .parse(arena, state, min_indent)
-            .map_err(|(p_after, err)| (p.or(p_after), err))?;
+        let (p_after, ident_after, state) =
+            match space0_e(indent_after_problem).parse(arena, state, min_indent) {
+                Err((p_after, err)) => Err((p.or(p_after), err)),
+                res => res,
+            }?;
 
         Ok((
             p.or(p_after),
@@ -175,9 +178,10 @@ where
         let (ident_p, space_list, state) =
             space0_e(indent_problem).parse(arena, state, min_indent)?;
 
-        let (_, loc_expr, state) = parser
-            .parse(arena, state, min_indent)
-            .map_err(|(p, err)| (ident_p.or(p), err))?;
+        let (_, loc_expr, state) = match parser.parse(arena, state, min_indent) {
+            Err((p, err)) => Err((ident_p.or(p), err)),
+            res => res,
+        }?;
 
         let out = if space_list.is_empty() {
             loc_expr

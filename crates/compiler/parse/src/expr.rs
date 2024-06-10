@@ -15,7 +15,7 @@ use crate::ident::{
 use crate::module::module_name_help;
 use crate::number_literal::number_literal;
 use crate::parser::{
-    self, backtrackable, byte, increment_min_indent, optional, reset_min_indent, sep_by1,
+    self, backtrackable, byte, increment_min_indent, keyword, optional, reset_min_indent, sep_by1,
     set_min_indent, specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr,
     EIf, EImport, EImportParams, EInParens, EList, ENumber, EPattern, ERecord, EString, EType,
     EWhen, Either, ParseResult, Parser,
@@ -168,23 +168,6 @@ fn record_field_access_chain<'a>() -> impl Parser<'a, Vec<'a, Suffix<'a>>, EExpr
     ))
 }
 
-/// In some contexts we want to parse the `_` as an expression, so it can then be turned into a
-/// pattern later
-fn loc_term_or_underscore<'a>(
-    options: ExprParseOptions,
-) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    move |arena, state: State<'a>, min_indent| {
-        let start = state.pos();
-        match underscore_expression().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => {}
-        };
-
-        loc_term(options).parse(arena, state.clone(), min_indent)
-    }
-}
-
 fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
     move |arena, state: State<'a>, min_indent| {
         let start = state.pos();
@@ -218,12 +201,10 @@ fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EEx
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::List(err, start))),
             Err(_) => {}
         };
-        ident_seq().parse(arena, state.clone(), min_indent)
+        parse_ident_seq
+            .trace("ident_seq")
+            .parse(arena, state.clone(), min_indent)
     }
-}
-
-fn ident_seq<'a>() -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    parse_ident_seq.trace("ident_seq")
 }
 
 fn parse_ident_seq<'a>(
@@ -261,15 +242,6 @@ fn underscore_expression<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
     }
 }
 
-fn crash_kw<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
-    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let (_, _, next_state) = crate::parser::keyword(crate::keyword::CRASH, EExpr::Crash)
-            .parse(arena, state, min_indent)?;
-
-        Ok((MadeProgress, Expr::Crash, next_state))
-    }
-}
-
 fn loc_possibly_negative_or_negated_term<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
@@ -298,10 +270,9 @@ fn loc_possibly_negative_or_negated_term<'a>(
             }
         }
 
-        let state = start_state.clone();
-
         // TODO @perf it will duplicate check for the positive_number_literal_help as above loc_term
         // TODO @perf it will duplicate the check for '-' as above
+        let state = start_state.clone();
         match number_literal().parse(arena, state, min_indent) {
             Ok((p, literal, state)) => {
                 use crate::number_literal::NumLiteral::*;
@@ -343,22 +314,54 @@ fn loc_possibly_negative_or_negated_term<'a>(
             _ => {}
         }
 
-        {
-            let options = options;
-            one_of!(
-                loc_expr_in_parens_etc_help(),
-                loc!(specialize_err(EExpr::If, if_expr_help(options))),
-                loc!(specialize_err(EExpr::When, when::expr_help(options))),
-                loc!(specialize_err(EExpr::Str, string_like_literal_help())),
-                loc!(specialize_err(EExpr::Closure, closure_help(options))),
-                loc!(crash_kw()),
-                loc!(underscore_expression()),
-                loc!(record_literal_help()),
-                loc!(specialize_err(EExpr::List, list_literal_help())),
-                ident_seq(),
-            )
+        match loc_expr_in_parens_etc_help().parse(arena, start_state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match if_expr_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::If(err, start))),
+            Err(_) => {}
+        };
+        match when::expr_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::When(err, start))),
+            Err(_) => {}
+        };
+        match string_like_literal_help().parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Str(err, start))),
+            Err(_) => {}
+        };
+        match closure_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err(_) => {}
+        };
+        match underscore_expression().parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
         }
-        .parse(arena, start_state.clone(), min_indent)
+        match keyword(keyword::CRASH, EExpr::Crash).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, _, state)) => return Ok((p, Loc::of(start, state.pos(), Expr::Crash), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        }
+        match record_literal_help().parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match list_literal_help().parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::List(err, start))),
+            Err(_) => {}
+        };
+        parse_ident_seq
+            .trace("ident_seq")
+            .parse(arena, start_state, min_indent)
     }
 }
 
@@ -692,8 +695,8 @@ pub fn parse_single_def<'a>(
 
     let start = state.pos();
 
-    let parse_expect_vanilla = crate::parser::keyword(crate::keyword::EXPECT, EExpect::Expect);
-    let parse_expect_fx = crate::parser::keyword(crate::keyword::EXPECT_FX, EExpect::Expect);
+    let parse_expect_vanilla = keyword(keyword::EXPECT, EExpect::Expect);
+    let parse_expect_fx = keyword(keyword::EXPECT_FX, EExpect::Expect);
     let parse_expect = either!(parse_expect_fx, parse_expect_vanilla);
 
     match space0_after_e(crate::pattern::loc_pattern_help(), EPattern::IndentEnd).parse(
@@ -2198,8 +2201,13 @@ fn parse_expr_end<'a>(
     state: State<'a>,
     initial_state: State<'a>,
 ) -> ParseResult<'a, Expr<'a>, EExpr<'a>> {
+    let start = state.pos();
     let term_or_underscore = if state.column() >= min_indent {
-        loc_term_or_underscore(options).parse(arena, state.clone(), min_indent)
+        match underscore_expression().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => Err((MadeProgress, err)),
+            Err(_) => loc_term(options).parse(arena, state.clone(), min_indent),
+        }
     } else {
         Err((NoProgress, EExpr::IndentEnd(state.pos())))
     };
@@ -2212,7 +2220,7 @@ fn parse_expr_end<'a>(
                 value:
                     Expr::Var {
                         module_name: "",
-                        ident: crate::keyword::IMPLEMENTS,
+                        ident: keyword::IMPLEMENTS,
                         ..
                     },
                 ..
@@ -2637,7 +2645,6 @@ pub fn parse_top_level_defs<'a>(
     Ok((MadeProgress, output, state))
 }
 
-// PARSER HELPERS
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     move |arena, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();

@@ -175,6 +175,19 @@ fn loc_term_or_underscore<'a>(
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
     move |arena, state: State<'a>, min_indent| {
         let start = state.pos();
+        match underscore_expression().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+
+        loc_term(options).parse(arena, state.clone(), min_indent)
+    }
+}
+
+fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
         match loc_expr_in_parens_etc_help().parse(arena, state.clone(), min_indent) {
             Ok(ok) => return Ok(ok),
             Err((MadeProgress, err)) => return Err((MadeProgress, err)),
@@ -195,11 +208,6 @@ fn loc_term_or_underscore<'a>(
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
             Err(_) => {}
         };
-        match underscore_expression().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => {}
-        };
         match record_literal_help().parse(arena, state.clone(), min_indent) {
             Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
             Err((MadeProgress, err)) => return Err((MadeProgress, err)),
@@ -212,21 +220,6 @@ fn loc_term_or_underscore<'a>(
         };
         ident_seq().parse(arena, state.clone(), min_indent)
     }
-}
-
-fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    one_of!(
-        loc_expr_in_parens_etc_help(),
-        loc!(specialize_err(EExpr::Str, string_like_literal_help())),
-        loc!(specialize_err(
-            EExpr::Number,
-            positive_number_literal_help()
-        )),
-        loc!(specialize_err(EExpr::Closure, closure_help(options))),
-        loc!(record_literal_help()),
-        loc!(specialize_err(EExpr::List, list_literal_help())),
-        ident_seq(),
-    )
 }
 
 fn ident_seq<'a>() -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {

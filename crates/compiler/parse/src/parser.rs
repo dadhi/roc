@@ -1,4 +1,4 @@
-use crate::state::{State, CLOSURE_PIPE_SUGAR};
+use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
 use roc_region::all::{Loc, Position, Region};
@@ -2005,106 +2005,6 @@ where
         }
         _ => Err((NoProgress, to_error(state.pos()))),
     }
-}
-
-/// Identifies the start of the closure and possibly the CLOSURE_PIPE_SUGAR.
-/// The closure definition start is either `\a,... -> body` or `\>`.
-///
-/// # Example
-///
-/// ```
-/// # #![forbid(unused_imports)]
-/// # use roc_parse::state::State;
-/// # use crate::roc_parse::parser::{Parser, Progress, EClosure, byte_indent_closure_def_start};
-/// # use roc_region::all::Position;
-/// # use bumpalo::Bump;
-/// # let arena = Bump::new();
-/// let parser = byte_indent_closure_def_start();
-///
-/// // Success case 1 - normal closure definition
-/// let text = b"\\x -> Num.add x 42";
-/// let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
-/// assert_eq!(progress, Progress::MadeProgress);
-/// assert_eq!(output, ());
-/// assert_eq!(state.pos(), Position::new(1));
-/// assert_eq!(state.closure_pipe_desugared(), false);
-///
-/// // Success case 1 - pipe sugar
-/// let text = b"\\> Num.add 42";
-/// let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
-/// assert_eq!(progress, Progress::MadeProgress);
-/// assert_eq!(output, ());
-/// assert_eq!(state.pos(), Position::new(0));
-/// assert_eq!(state.closure_pipe_desugared(), true);
-///
-/// // Error case
-/// let text = b"hello";
-/// let (progress, problem) = parser.parse(&arena, State::new(text), 0).unwrap_err();
-/// assert_eq!(progress, Progress::NoProgress);
-/// assert_eq!(problem, EClosure::Start(Position::zero()));
-///
-/// ```
-pub fn byte_indent_closure_slash<'a>() -> impl Parser<'a, (), EClosure<'a>> {
-    move |_arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        if min_indent > state.column() {
-            return Err((NoProgress, EClosure::Start(state.pos())));
-        }
-
-        if state
-            .original_bytes_at_offset()
-            .starts_with(CLOSURE_PIPE_SUGAR)
-        {
-            let state = state.activate_closure_pipe_desugar();
-            Ok((MadeProgress, (), state))
-        } else {
-            match state.bytes().first() {
-                Some(x) if *x == b'\\' => {
-                    let state = state.advance_original_bytes(1);
-                    Ok((MadeProgress, (), state))
-                }
-                _ => Err((NoProgress, EClosure::Start(state.pos()))),
-            }
-        }
-    }
-}
-
-#[test]
-fn parse_closure_def_start() {
-    let arena = Bump::new();
-    let parser = byte_indent_closure_slash();
-
-    let text = b"\\x -> Num.add x 42";
-    let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
-
-    assert_eq!(progress, Progress::MadeProgress);
-    assert_eq!(output, ());
-    assert_eq!(state.pos(), Position::new(1));
-    assert_eq!(state.closure_pipe_desugared(), false);
-}
-
-#[test]
-fn parse_closure_pipe() {
-    let arena = Bump::new();
-    let parser = byte_indent_closure_slash();
-
-    let text = b"\\> Num.add 42";
-    let (progress, output, state) = parser.parse(&arena, State::new(text), 0).unwrap();
-
-    assert_eq!(progress, Progress::MadeProgress);
-    assert_eq!(output, ());
-    assert_eq!(state.pos(), Position::new(0));
-    assert_eq!(state.closure_pipe_desugared(), true);
-}
-
-#[test]
-fn parse_closure_def_start_failed() {
-    let arena = Bump::new();
-    let parser = byte_indent_closure_slash();
-
-    let text = b"hello";
-    let (progress, problem) = parser.parse(&arena, State::new(text), 0).unwrap_err();
-    assert_eq!(progress, Progress::NoProgress);
-    assert_eq!(problem, EClosure::Start(Position::zero()));
 }
 
 /// Matches two `u8` in a row.

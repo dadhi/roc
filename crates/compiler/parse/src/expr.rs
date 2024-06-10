@@ -14,10 +14,10 @@ use crate::ident::{
 };
 use crate::module::module_name_help;
 use crate::parser::{
-    self, backtrackable, byte, byte_indent_closure_slash, increment_min_indent, optional,
-    reset_min_indent, sep_by1, set_min_indent, specialize_err, specialize_err_ref, then, two_bytes,
-    EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens, EList, ENumber, EPattern,
-    ERecord, EString, EType, EWhen, Either, ParseResult, Parser,
+    self, backtrackable, byte, increment_min_indent, optional, reset_min_indent, sep_by1,
+    set_min_indent, specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr,
+    EIf, EImport, EImportParams, EInParens, EList, ENumber, EPattern, ERecord, EString, EType,
+    EWhen, Either, ParseResult, Parser,
 };
 use crate::pattern::{closure_param_pattern, loc_implements_parser};
 use crate::state::State;

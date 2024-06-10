@@ -13,6 +13,7 @@ use crate::ident::{
     integer_ident, lowercase_ident, parse_ident, unqualified_ident, Accessor, Ident, Suffix,
 };
 use crate::module::module_name_help;
+use crate::number_literal::number_literal;
 use crate::parser::{
     self, backtrackable, byte, increment_min_indent, optional, reset_min_indent, sep_by1,
     set_min_indent, specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr,
@@ -327,11 +328,31 @@ fn loc_possibly_negative_or_negated_term<'a>(
             }
         }
 
-        match number_literal_help().parse(arena, start_state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+        let state = start_state.clone();
+
+        // TODO @perf it will duplicate check for the positive_number_literal_help as above loc_term
+        // TODO @perf it will duplicate the check for '-' as above
+        match number_literal().parse(arena, state, min_indent) {
+            Ok((p, literal, state)) => {
+                use crate::number_literal::NumLiteral::*;
+                let literal_expr = match literal {
+                    Num(s) => Expr::Num(s),
+                    Float(s) => Expr::Float(s),
+                    NonBase10Int {
+                        string,
+                        base,
+                        is_negative,
+                    } => Expr::NonBase10Int {
+                        string,
+                        base,
+                        is_negative,
+                    },
+                };
+                return Ok((p, Loc::of(start, state.pos(), literal_expr), state));
+            }
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
             Err(_) => {}
-        };
+        }
 
         let state = start_state.clone();
         match state.bytes().first() {
@@ -352,6 +373,7 @@ fn loc_possibly_negative_or_negated_term<'a>(
             _ => {}
         }
 
+        // TODO @perf it will duplicate check for the positive_number_literal_help as above number_literal
         loc_term_or_underscore_or_conditional(options).parse(arena, start_state.clone(), min_indent)
     }
 }
@@ -3558,26 +3580,6 @@ fn positive_number_literal_help<'a>() -> impl Parser<'a, Expr<'a>, ENumber> {
             }
         }
     )
-}
-
-fn number_literal_help<'a>() -> impl Parser<'a, Expr<'a>, ENumber> {
-    map!(crate::number_literal::number_literal(), |literal| {
-        use crate::number_literal::NumLiteral::*;
-
-        match literal {
-            Num(s) => Expr::Num(s),
-            Float(s) => Expr::Float(s),
-            NonBase10Int {
-                string,
-                base,
-                is_negative,
-            } => Expr::NonBase10Int {
-                string,
-                base,
-                is_negative,
-            },
-        }
-    })
 }
 
 const BINOP_CHAR_SET: &[u8] = b"+-/*=.<>:&|^?%!";

@@ -15,7 +15,7 @@ pub enum NumLiteral<'a> {
 pub fn positive_number_literal<'a>() -> impl Parser<'a, NumLiteral<'a>, ENumber> {
     move |_arena, state: State<'a>, _min_indent: u32| {
         match state.bytes().first() {
-            Some(first_byte) if (*first_byte as char).is_ascii_digit() => {
+            Some(first_byte) if first_byte.is_ascii_digit() => {
                 parse_number_base(false, state.bytes(), state)
             }
             _ => {
@@ -33,7 +33,7 @@ pub fn number_literal<'a>() -> impl Parser<'a, NumLiteral<'a>, ENumber> {
                 // drop the minus
                 parse_number_base(true, &state.bytes()[1..], state)
             }
-            Some(first_byte) if (*first_byte as char).is_ascii_digit() => {
+            Some(first_byte) if first_byte.is_ascii_digit() => {
                 parse_number_base(false, state.bytes(), state)
             }
             _ => {

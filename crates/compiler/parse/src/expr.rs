@@ -195,19 +195,45 @@ fn loc_term_or_underscore_or_conditional<'a>(
 fn loc_term_or_underscore<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    one_of!(
-        loc_expr_in_parens_etc_help(),
-        loc!(specialize_err(EExpr::Str, string_like_literal_help())),
-        loc!(specialize_err(
-            EExpr::Number,
-            positive_number_literal_help()
-        )),
-        loc!(specialize_err(EExpr::Closure, closure_help(options))),
-        loc!(underscore_expression()),
-        loc!(record_literal_help()),
-        loc!(specialize_err(EExpr::List, list_literal_help())),
-        ident_seq(),
-    )
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match loc_expr_in_parens_etc_help().parse(arena, state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match string_like_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Str(err, start))),
+            Err(_) => {}
+        };
+        match positive_number_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
+            Err(_) => {}
+        };
+        match closure_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err(_) => {}
+        };
+        match underscore_expression().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match record_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match list_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::List(err, start))),
+            Err(_) => {}
+        };
+        ident_seq().parse(arena, state.clone(), min_indent)
+    }
 }
 
 fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
@@ -276,54 +302,57 @@ fn crash_kw<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
 fn loc_possibly_negative_or_negated_term<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    let parse_unary_negate = move |arena, state: State<'a>, min_indent: u32| {
-        let initial = state.clone();
+    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
+        let start_state = state.clone();
+        let start = state.pos();
 
-        let (_, (loc_op, loc_expr), state) =
-            and!(loc!(unary_negate()), loc_term(options)).parse(arena, state, min_indent)?;
-
-        let loc_expr = numeric_negate_expression(arena, initial, loc_op, loc_expr, &[]);
-
-        Ok((MadeProgress, loc_expr, state))
-    };
-
-    one_of![
-        parse_unary_negate,
-        // this will parse negative numbers, which the unary negate thing up top doesn't (for now)
-        loc!(specialize_err(EExpr::Number, number_literal_help())),
-        loc!(map_with_arena!(
-            and!(
-                loc!(byte(b'!', EExpr::Start)),
-                space0_before_e(loc_term(options), EExpr::IndentStart)
-            ),
-            |arena: &'a Bump, (loc_op, loc_expr): (Loc<_>, _)| {
-                Expr::UnaryOp(arena.alloc(loc_expr), Loc::at(loc_op.region, UnaryOp::Not))
+        // check for the numeric unary negate operator '-'
+        if state.bytes().starts_with(b"-") {
+            let followed_by_whitespace = match state.bytes().get(1) {
+                Some(b) => b.is_ascii_whitespace() || *b == b'#',
+                _ => false,
+            };
+            if !followed_by_whitespace {
+                let state = state.advance(1);
+                let op_at = Region::new(start, state.pos());
+                match loc_term(options).parse(arena, state, min_indent) {
+                    Ok((_, loc_expr, state)) => {
+                        let loc_expr =
+                            numeric_negate_expression(arena, start_state, op_at, loc_expr, &[]);
+                        return Ok((MadeProgress, loc_expr, state));
+                    }
+                    Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+                    Err(_) => {}
+                }
             }
-        )),
-        loc_term_or_underscore_or_conditional(options)
-    ]
-}
-
-fn unary_negate<'a>() -> impl Parser<'a, (), EExpr<'a>> {
-    move |_arena: &'a Bump, state: State<'a>, _min_indent: u32| {
-        // a minus is unary iff
-        //
-        // - it is preceded by whitespace (spaces, newlines, comments)
-        // - it is not followed by whitespace
-        let followed_by_whitespace = state
-            .bytes()
-            .get(1)
-            .map(|c| c.is_ascii_whitespace() || *c == b'#')
-            .unwrap_or(false);
-
-        if state.bytes().starts_with(b"-") && !followed_by_whitespace {
-            // the negate is only unary if it is not followed by whitespace
-            let state = state.advance(1);
-            Ok((MadeProgress, (), state))
-        } else {
-            // this is not a negated expression
-            Err((NoProgress, EExpr::UnaryNot(state.pos())))
         }
+
+        match number_literal_help().parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
+            Err(_) => {}
+        };
+
+        let state = start_state.clone();
+        match state.bytes().first() {
+            Some(b) if *b == b'!' => {
+                let state = state.advance(1);
+                let bang_at = Region::new(start, state.pos());
+                match space0_before_e(loc_term(options), EExpr::IndentStart)
+                    .parse(arena, state, min_indent)
+                {
+                    Ok((_, expr, state)) => {
+                        let expr = Expr::UnaryOp(arena.alloc(expr), Loc::at(bang_at, UnaryOp::Not));
+                        return Ok((MadeProgress, Loc::of(start, state.pos(), expr), state));
+                    }
+                    Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+                    Err(_) => {}
+                }
+            }
+            _ => {}
+        }
+
+        loc_term_or_underscore_or_conditional(options).parse(arena, start_state.clone(), min_indent)
     }
 }
 
@@ -579,10 +608,10 @@ fn to_call<'a>(
     }
 }
 
-fn numeric_negate_expression<'a, T>(
+fn numeric_negate_expression<'a>(
     arena: &'a Bump,
     state: State<'a>,
-    loc_op: Loc<T>,
+    op_at: Region,
     expr: Loc<Expr<'a>>,
     spaces: &'a [CommentOrNewline<'a>],
 ) -> Loc<Expr<'a>> {
@@ -616,7 +645,7 @@ fn numeric_negate_expression<'a, T>(
                 base,
             }
         }
-        _ => Expr::UnaryOp(arena.alloc(expr), Loc::at(loc_op.region, UnaryOp::Negate)),
+        _ => Expr::UnaryOp(arena.alloc(expr), Loc::at(op_at, UnaryOp::Negate)),
     };
 
     let new_loc_expr = Loc::at(region, new_expr);
@@ -1217,7 +1246,7 @@ pub fn parse_single_def_assignment<'a>(
                 ));
             }
             Err(_) => {
-                // Unable to parse more defs, continue and return the first parsed expression as a stement
+                // Unable to parse more defs, continue and return the first parsed expression as a statement
                 let empty_return =
                     arena.alloc(Loc::at(first_loc_expr.region, Expr::EmptyDefsFinal));
                 let value_def = ValueDef::Body(
@@ -1934,7 +1963,7 @@ fn parse_expr_operator<'a>(
             let arg = numeric_negate_expression(
                 arena,
                 initial_state,
-                loc_op,
+                loc_op.region,
                 negated_expr,
                 expr_state.spaces_after,
             );
@@ -2265,16 +2294,17 @@ fn parse_expr_end<'a>(
             let before_op = state.clone();
             // try an operator
             let line_indent = state.line_indent();
-            match loc!(operator()).parse(arena, state.clone(), min_indent) {
+            let before_operator = state.pos();
+            match operator().parse(arena, state.clone(), min_indent) {
                 Err((MadeProgress, f)) => Err((MadeProgress, f)),
-                Ok((_, loc_op, state)) => {
+                Ok((_, op, state)) => {
                     expr_state.consume_spaces(arena);
                     let initial_state = before_op;
                     parse_expr_operator(
                         min_indent,
                         options,
                         expr_state,
-                        loc_op,
+                        Loc::of(before_operator, state.pos(), op),
                         line_indent,
                         arena,
                         state,

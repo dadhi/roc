@@ -1,8 +1,7 @@
 use roc_region::all::{Position, Region};
 use std::fmt;
 
-use crate::parser::Progress;
-
+// TODO @wip remove
 pub const CLOSURE_PIPE_SUGAR: &[u8] = b"\\>";
 pub const CLOSURE_PIPE_SUGAR_LEN: usize = CLOSURE_PIPE_SUGAR.len();
 pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\0__ -> o__ |>";
@@ -81,20 +80,6 @@ impl<'a> State<'a> {
 
     pub fn line_indent(&self) -> u32 {
         self.line_start_after_whitespace.offset - self.line_start.offset
-    }
-
-    /// Check that the indent is at least `indent` spaces.
-    /// Return a new indent if the current indent is greater than `indent`.
-    pub fn check_indent<E>(
-        &self,
-        indent: u32,
-        e: impl Fn(Position) -> E,
-    ) -> Result<u32, (Progress, E)> {
-        if self.column() < indent {
-            Err((Progress::NoProgress, e(self.pos())))
-        } else {
-            Ok(std::cmp::max(indent, self.line_indent()))
-        }
     }
 
     #[must_use]

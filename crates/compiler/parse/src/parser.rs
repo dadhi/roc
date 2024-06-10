@@ -1643,7 +1643,7 @@ macro_rules! and {
                 Ok((p2, out2, state)) => Ok((p1.or(p2), (out1, out2), state)),
                 Err((p2, fail)) => Err((p1.or(p2), fail)),
             },
-            Err((progress, fail)) => Err((progress, fail)),
+            Err(err) => Err(err),
         }
     };
 }
@@ -2202,16 +2202,6 @@ where
             Err((NoProgress, to_error(state.pos())))
         }
     }
-}
-
-#[macro_export]
-macro_rules! byte_check_indent {
-    ($byte_to_match:expr, $problem:expr, $min_indent:expr, $indent_problem:expr) => {
-        and!(
-            byte($byte_to_match, $problem),
-            $crate::parser::check_indent($min_indent, $indent_problem)
-        )
-    };
 }
 
 /// transform the `Ok` result of a parser

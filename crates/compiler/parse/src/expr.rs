@@ -170,29 +170,6 @@ fn record_field_access_chain<'a>() -> impl Parser<'a, Vec<'a, Suffix<'a>>, EExpr
 
 /// In some contexts we want to parse the `_` as an expression, so it can then be turned into a
 /// pattern later
-fn loc_term_or_underscore_or_conditional<'a>(
-    options: ExprParseOptions,
-) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    one_of!(
-        loc_expr_in_parens_etc_help(),
-        loc!(specialize_err(EExpr::If, if_expr_help(options))),
-        loc!(specialize_err(EExpr::When, when::expr_help(options))),
-        loc!(specialize_err(EExpr::Str, string_like_literal_help())),
-        loc!(specialize_err(
-            EExpr::Number,
-            positive_number_literal_help()
-        )),
-        loc!(specialize_err(EExpr::Closure, closure_help(options))),
-        loc!(crash_kw()),
-        loc!(underscore_expression()),
-        loc!(record_literal_help()),
-        loc!(specialize_err(EExpr::List, list_literal_help())),
-        ident_seq(),
-    )
-}
-
-/// In some contexts we want to parse the `_` as an expression, so it can then be turned into a
-/// pattern later
 fn loc_term_or_underscore<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
@@ -373,8 +350,22 @@ fn loc_possibly_negative_or_negated_term<'a>(
             _ => {}
         }
 
-        // TODO @perf it will duplicate check for the positive_number_literal_help as above number_literal
-        loc_term_or_underscore_or_conditional(options).parse(arena, start_state.clone(), min_indent)
+        {
+            let options = options;
+            one_of!(
+                loc_expr_in_parens_etc_help(),
+                loc!(specialize_err(EExpr::If, if_expr_help(options))),
+                loc!(specialize_err(EExpr::When, when::expr_help(options))),
+                loc!(specialize_err(EExpr::Str, string_like_literal_help())),
+                loc!(specialize_err(EExpr::Closure, closure_help(options))),
+                loc!(crash_kw()),
+                loc!(underscore_expression()),
+                loc!(record_literal_help()),
+                loc!(specialize_err(EExpr::List, list_literal_help())),
+                ident_seq(),
+            )
+        }
+        .parse(arena, start_state.clone(), min_indent)
     }
 }
 

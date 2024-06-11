@@ -2653,17 +2653,12 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             return Err((NoProgress, EClosure::Start(state.pos())));
         }
 
-        let (slash_progress, (), state) = if state.original_bytes_at_offset().starts_with(b"\\>") {
-            let state = state.activate_closure_pipe_desugar();
-            Ok((MadeProgress, (), state))
-        } else {
-            match state.bytes().first() {
-                Some(x) if *x == b'\\' => {
-                    let state = state.advance_original_bytes(1);
-                    Ok((MadeProgress, (), state))
-                }
-                _ => Err((NoProgress, EClosure::Start(state.pos()))),
+        let (slash_progress, (), state) = match state.bytes().first() {
+            Some(x) if *x == b'\\' => {
+                let state = state.advance(1);
+                Ok((MadeProgress, (), state))
             }
+            _ => Err((NoProgress, EClosure::Start(state.pos()))),
         }?;
 
         // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR

@@ -4786,23 +4786,12 @@ mod test_fmt {
     }
 
     #[test]
-    fn func_call_trailing_lambda_pipe_sugar() {
-        expr_formats_to(
-            indoc!(
-                r"
-                list = List.map [1, 2, 3] \> Num.add 1
-
-                list
-                "
-            ),
-            indoc!(
-                r"
-                list = List.map [1, 2, 3] \o__ -> \o__ |> Num.add 1
-
-                list
-                "
-            ),
-        );
+    fn simple_closure_with_pipe_sugar() {
+        expr_formats_same(indoc!(
+            r"
+                \> Num.add 1
+            "
+        ));
     }
 
     // MODULES

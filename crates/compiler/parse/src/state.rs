@@ -1,12 +1,6 @@
 use roc_region::all::{Position, Region};
 use std::fmt;
 
-// TODO @wip remove
-pub const CLOSURE_PIPE_SUGAR: &[u8] = b"\\>";
-pub const CLOSURE_PIPE_SUGAR_LEN: usize = CLOSURE_PIPE_SUGAR.len();
-pub const CLOSURE_PIPE_DESUGAR: &[u8] = b"\\0__ -> o__ |>";
-pub const CLOSURE_PIPE_DESUGAR_LEN: usize = CLOSURE_PIPE_DESUGAR.len();
-
 /// A position in a source file.
 // NB: [Copy] is explicitly NOT derived to reduce the chance of bugs due to accidentally re-using
 // parser state.
@@ -25,14 +19,6 @@ pub struct State<'a> {
 
     /// Position of the first non-whitespace character on the current line
     pub(crate) line_start_after_whitespace: Position,
-
-    // TODO @wip
-    /// The bytes desugared from the shorthand syntax in the original bytes, e.g. `\>` to `\x -> x |>`
-    closure_pipe_desugar_active: bool,
-
-    /// The offset inside the desugared bytes,
-    /// so the logical current offset will be `offset + closure_pipe_desugar_offset`
-    closure_pipe_desugar_offset: usize,
 }
 
 impl<'a> State<'a> {
@@ -45,9 +31,6 @@ impl<'a> State<'a> {
             // Technically not correct.
             // We don't know the position of the first non-whitespace character yet.
             line_start_after_whitespace: Position::zero(),
-
-            closure_pipe_desugar_active: false,
-            closure_pipe_desugar_offset: 0,
         }
     }
 
@@ -55,23 +38,8 @@ impl<'a> State<'a> {
         self.original_bytes
     }
 
-    pub fn original_bytes_at_offset(&self) -> &'a [u8] {
-        &self.original_bytes[self.offset..]
-    }
-
     pub(crate) fn bytes(&self) -> &'a [u8] {
-        if self.closure_pipe_desugar_active {
-            if self.closure_pipe_desugar_offset >= CLOSURE_PIPE_DESUGAR_LEN {
-                let original_offset =
-                    self.offset + CLOSURE_PIPE_SUGAR_LEN + self.closure_pipe_desugar_offset
-                        - CLOSURE_PIPE_DESUGAR_LEN;
-                &self.original_bytes[original_offset..]
-            } else {
-                &CLOSURE_PIPE_DESUGAR[self.closure_pipe_desugar_offset..]
-            }
-        } else {
-            &self.original_bytes[self.offset..]
-        }
+        &self.original_bytes[self.offset..]
     }
 
     pub fn column(&self) -> u32 {
@@ -82,31 +50,9 @@ impl<'a> State<'a> {
         self.line_start_after_whitespace.offset - self.line_start.offset
     }
 
-    #[must_use]
-    #[inline(always)]
-    pub(crate) fn activate_closure_pipe_desugar(mut self) -> State<'a> {
-        debug_assert!(
-            !self.closure_pipe_desugar_active,
-            "closure_pipe_desugar should be inactive"
-        );
-        self.closure_pipe_desugar_active = true;
-        self.closure_pipe_desugar_offset = 0;
-        self
-    }
-
     /// Mutably advance the state by a given offset
     pub(crate) fn advance_mut(&mut self, offset: usize) {
-        if self.closure_pipe_desugar_active {
-            let new_offset = self.closure_pipe_desugar_offset + offset;
-            if new_offset >= CLOSURE_PIPE_DESUGAR_LEN {
-                self.offset += CLOSURE_PIPE_SUGAR_LEN + new_offset - CLOSURE_PIPE_DESUGAR_LEN;
-                self.closure_pipe_desugar_active = false;
-            } else {
-                self.closure_pipe_desugar_offset = new_offset;
-            }
-        } else {
-            self.offset += offset;
-        }
+        self.offset += offset;
     }
 
     /// If the next `text.len()` bytes of the input match the provided `text`,
@@ -125,23 +71,6 @@ impl<'a> State<'a> {
     #[must_use]
     #[inline(always)]
     pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
-        if self.closure_pipe_desugar_active {
-            let new_offset = self.closure_pipe_desugar_offset + offset;
-            if new_offset >= CLOSURE_PIPE_DESUGAR_LEN {
-                self.offset += CLOSURE_PIPE_SUGAR_LEN + new_offset - CLOSURE_PIPE_DESUGAR_LEN;
-                self.closure_pipe_desugar_active = false;
-            } else {
-                self.closure_pipe_desugar_offset = new_offset;
-            }
-        } else {
-            self.offset += offset;
-        }
-        self
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub(crate) const fn advance_original_bytes(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self
     }
@@ -169,10 +98,6 @@ impl<'a> State<'a> {
     /// Returns the current position
     pub const fn pos(&self) -> Position {
         Position::new(self.offset as u32)
-    }
-
-    pub const fn closure_pipe_desugared(&self) -> bool {
-        self.closure_pipe_desugar_active
     }
 
     /// Returns whether the parser has reached the end of the input

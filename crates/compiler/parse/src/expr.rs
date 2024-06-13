@@ -459,57 +459,19 @@ impl<'a> ExprState<'a> {
         if !self.spaces_after.is_empty() {
             if let Some(last) = self.arguments.pop() {
                 let new = last.value.with_spaces_after(self.spaces_after, last.region);
-
                 self.arguments.push(arena.alloc(new));
             } else {
-                let region = self.expr.region;
-
                 let mut value = Expr::Num("");
                 std::mem::swap(&mut self.expr.value, &mut value);
-
                 self.expr = arena
                     .alloc(value)
-                    .with_spaces_after(self.spaces_after, region);
+                    .with_spaces_after(self.spaces_after, self.expr.region);
             };
 
             self.spaces_after = &[];
         }
     }
-
-    fn validate_assignment_or_backpassing<F>(
-        mut self,
-        arena: &'a Bump,
-        op_start: Position,
-        op: BinOp,
-        argument_error: F,
-    ) -> Result<Loc<Expr<'a>>, EExpr<'a>>
-    where
-        F: Fn(Region, Position) -> EExpr<'a>,
-    {
-        if !self.operators.is_empty() {
-            // this `=` or `<-` likely occurred inline; treat it as an invalid operator
-            let op_char = match op {
-                BinOp::Assignment => "=",
-                BinOp::Backpassing => "<-",
-                _ => unreachable!(),
-            };
-
-            let fail = EExpr::BadOperator(op_char, op_start);
-            Err(fail)
-        } else if !self.expr.value.is_tag()
-            && !self.expr.value.is_opaque()
-            && !self.arguments.is_empty()
-            && !is_expr_suffixed(&self.expr.value)
-        {
-            let region = Region::across_all(self.arguments.iter().map(|v| &v.region));
-            Err(argument_error(region, op_start))
-        } else {
-            self.consume_spaces(arena);
-            Ok(to_call(arena, self.arguments, self.expr))
-        }
-    }
 }
-
 #[allow(clippy::unnecessary_wraps)]
 fn parse_expr_final<'a>(expr_state: ExprState<'a>, arena: &'a Bump) -> Expr<'a> {
     let right_arg = to_call(arena, expr_state.arguments, expr_state.expr);
@@ -1633,13 +1595,8 @@ fn finish_parsing_alias_or_opaque<'a>(
                     type_arguments.push(Loc::at(argument.region, good));
                 }
                 Err(()) => {
-                    return Err((
-                        MadeProgress,
-                        EExpr::Pattern(
-                            arena.alloc(EPattern::NotAPattern(state.pos())),
-                            state.pos(),
-                        ),
-                    ));
+                    let pattern = arena.alloc(EPattern::NotAPattern(state.pos()));
+                    return Err((MadeProgress, EExpr::Pattern(pattern, state.pos())));
                 }
             }
         }
@@ -1727,8 +1684,7 @@ fn finish_parsing_alias_or_opaque<'a>(
                     AliasOrOpaque::Alias => ":",
                     AliasOrOpaque::Opaque => ":=",
                 };
-                let fail = EExpr::BadOperator(op, op_start);
-                return Err((MadeProgress, fail));
+                return Err((MadeProgress, EExpr::BadOperator(op, op_start)));
             }
         }
     };
@@ -1956,9 +1912,28 @@ fn parse_expr_operator<'a>(
 
             let indented_more = line_indent + 1;
 
-            let call = expr_state
-                .validate_assignment_or_backpassing(arena, op_start, op, EExpr::ElmStyleFunction)
-                .map_err(|fail| (MadeProgress, fail))?;
+            if !expr_state.operators.is_empty() {
+                // this `=` or `<-` likely occurred inline; treat it as an invalid operator
+                let op_char = match op {
+                    BinOp::Assignment => "=",
+                    BinOp::Backpassing => "<-",
+                    _ => unreachable!(),
+                };
+                return Err((MadeProgress, EExpr::BadOperator(op_char, op_start)));
+            }
+
+            let expr = expr_state.expr.value;
+            if !expr.is_tag()
+                && !expr.is_opaque()
+                && !expr_state.arguments.is_empty()
+                && !is_expr_suffixed(&expr)
+            {
+                let region = Region::across_all(expr_state.arguments.iter().map(|v| &v.region));
+                return Err((MadeProgress, EExpr::ElmStyleFunction(region, op_start)));
+            }
+
+            expr_state.consume_spaces(arena);
+            let call = to_call(arena, expr_state.arguments, expr_state.expr);
 
             let (value_def, def_region, state) = {
                 match expr_to_pattern_help(arena, &call.value) {
@@ -1999,11 +1974,27 @@ fn parse_expr_operator<'a>(
             let expr_region = expr_state.expr.region;
             let indented_more = min_indent + 1;
 
-            let call = expr_state
-                .validate_assignment_or_backpassing(arena, op_start, op, |_, pos| {
-                    EExpr::BadOperator("<-", pos)
-                })
-                .map_err(|fail| (MadeProgress, fail))?;
+            if !expr_state.operators.is_empty() {
+                // this `=` or `<-` likely occurred inline; treat it as an invalid operator
+                let op_char = match op {
+                    BinOp::Assignment => "=",
+                    BinOp::Backpassing => "<-",
+                    _ => unreachable!(),
+                };
+                return Err((MadeProgress, EExpr::BadOperator(op_char, op_start)));
+            }
+
+            let expr = &expr_state.expr.value;
+            if !expr.is_tag()
+                && !expr.is_opaque()
+                && !expr_state.arguments.is_empty()
+                && !is_expr_suffixed(&expr)
+            {
+                return Err((MadeProgress, EExpr::BadOperator("<-", op_start)));
+            }
+
+            expr_state.consume_spaces(arena);
+            let call = to_call(arena, expr_state.arguments, expr_state.expr);
 
             let (loc_pattern, loc_body, state) = {
                 match expr_to_pattern_help(arena, &call.value) {
@@ -2022,8 +2013,7 @@ fn parse_expr_operator<'a>(
                     }
                     Err(_) => {
                         // this `=` likely occurred inline; treat it as an invalid operator
-                        let fail = EExpr::BadOperator("=", op_start);
-                        return Err((MadeProgress, fail));
+                        return Err((MadeProgress, EExpr::BadOperator("=", op_start)));
                     }
                 }
             };

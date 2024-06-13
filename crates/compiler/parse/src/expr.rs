@@ -259,8 +259,13 @@ fn loc_possibly_negative_or_negated_term<'a>(
                 match loc_term(options).parse(arena, state, min_indent) {
                     Ok((_, loc_expr, state)) => {
                         let op_at = Region::new(start, state.pos());
-                        let loc_expr =
-                            numeric_negate_expression(arena, start_state, op_at, loc_expr, &[]);
+                        
+                        // for overflow reasons, we must make the unary minus part of the number literal.
+                        let region = Region::new(start_state.pos(), loc_expr.region.end());
+                        let new_expr = num_negate(loc_expr, op_at, arena, start_state);
+                        
+                        let loc_expr = Loc::at(region, new_expr);
+
                         return Ok((MadeProgress, loc_expr, state));
                     }
                     Err((MadeProgress, err)) => return Err((MadeProgress, err)),
@@ -530,29 +535,21 @@ fn to_call<'a>(
     }
 }
 
-fn numeric_negate_expression<'a>(
+fn num_negate<'a>(
+    expr: Loc<Expr<'a>>,
+    op_at: Region,
     arena: &'a Bump,
     state: State<'a>,
-    op_at: Region,
-    expr: Loc<Expr<'a>>,
-    spaces: &'a [CommentOrNewline<'a>],
-) -> Loc<Expr<'a>> {
-    debug_assert_eq!(state.bytes().first(), Some(&b'-'));
-    // for overflow reasons, we must make the unary minus part of the number literal.
-    let start = state.pos();
-    let region = Region::new(start, expr.region.end());
-
-    let new_expr = match expr.value {
+) -> Expr<'a> {
+    match expr.value {
         Expr::Num(string) => {
             let new_string =
                 unsafe { std::str::from_utf8_unchecked(&state.bytes()[..string.len() + 1]) };
-
             Expr::Num(new_string)
         }
         Expr::Float(string) => {
             let new_string =
                 unsafe { std::str::from_utf8_unchecked(&state.bytes()[..string.len() + 1]) };
-
             Expr::Float(new_string)
         }
         Expr::NonBase10Int {
@@ -568,16 +565,6 @@ fn numeric_negate_expression<'a>(
             }
         }
         _ => Expr::UnaryOp(arena.alloc(expr), Loc::at(op_at, UnaryOp::Negate)),
-    };
-
-    let new_loc_expr = Loc::at(region, new_expr);
-
-    if spaces.is_empty() {
-        new_loc_expr
-    } else {
-        arena
-            .alloc(new_loc_expr.value)
-            .with_spaces_before(spaces, new_loc_expr.region)
     }
 }
 
@@ -1871,7 +1858,7 @@ fn parse_expr_operator<'a>(
     let (_, spaces_after_operator, state) =
         space0_e(EExpr::IndentEnd).parse(arena, state, min_indent)?;
 
-    // a `-` is unary if it is preceded by a space and not followed by a space
+    // a '-' is unary if it is preceded by a space and not followed by a space
 
     let op = loc_op.value;
     let op_at = loc_op.region;
@@ -1880,18 +1867,20 @@ fn parse_expr_operator<'a>(
     let new_start = state.pos();
     match op {
         BinOp::Minus if expr_state.end != op_start && op_end == new_start => {
-            // negative terms
-
             let (_, negated_expr, state) = loc_term(options).parse(arena, state, min_indent)?;
             let new_end = state.pos();
 
-            let arg = numeric_negate_expression(
-                arena,
-                initial_state,
-                op_at,
-                negated_expr,
-                expr_state.spaces_after,
-            );
+            // for overflow reasons, we must make the unary minus part of the number literal.
+            let region = Region::new(initial_state.pos(), negated_expr.region.end());
+
+            let new_expr = num_negate(negated_expr, op_at, arena, initial_state);
+
+            let spaces = expr_state.spaces_after;
+            let arg = if spaces.is_empty() {
+                Loc::at(region, new_expr)
+            } else {
+                arena.alloc(new_expr).with_spaces_before(spaces, region)
+            };
 
             let initial_state = state.clone();
 
@@ -2221,7 +2210,6 @@ fn parse_expr_end<'a>(
             let line_indent = state.line_indent();
             let before_operator = state.pos();
             match operator().parse(arena, state.clone(), min_indent) {
-                Err((MadeProgress, f)) => Err((MadeProgress, f)),
                 Ok((_, op, state)) => {
                     expr_state.consume_spaces(arena);
                     let initial_state = before_op;
@@ -2236,6 +2224,7 @@ fn parse_expr_end<'a>(
                         initial_state,
                     )
                 }
+                Err((MadeProgress, f)) => Err((MadeProgress, f)),
                 Err((NoProgress, _)) => {
                     let mut state = state;
                     // try multi-backpassing
@@ -3074,7 +3063,7 @@ fn if_expr_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EIf<
 /// x -y   # "call x, passing (-y)"
 ///
 /// Since operators have higher precedence than function application,
-/// any time we encounter a '-' it is unary iff it is both preceded by spaces
+/// any time we encounter a '-' it is unary if it is preceded by spaces
 /// and is *not* followed by a whitespace character.
 
 /// When we parse an ident like `foo ` it could be any of these:

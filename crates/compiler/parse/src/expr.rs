@@ -122,30 +122,29 @@ fn loc_expr_in_parens_help<'a>() -> impl Parser<'a, Loc<Expr<'a>>, EInParens<'a>
 }
 
 fn loc_expr_in_parens_etc_help<'a>() -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    map_with_arena!(
-        loc!(and!(
-            specialize_err(EExpr::InParens, loc_expr_in_parens_help()),
-            record_field_access_chain()
-        )),
-        move |arena: &'a Bump, value: Loc<(Loc<Expr<'a>>, Vec<'a, Suffix<'a>>)>| {
-            let Loc {
-                mut region,
-                value: (loc_expr, field_accesses),
-            } = value;
-
-            let mut value = loc_expr.value;
-
-            // if there are field accesses, include the parentheses in the region
-            // otherwise, don't include the parentheses
-            if field_accesses.is_empty() {
-                region = loc_expr.region;
-            } else {
-                value = apply_expr_access_chain(arena, value, field_accesses);
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match loc_expr_in_parens_help().parse(arena, state, min_indent) {
+            Ok((p1, loc_expr, state)) => {
+                match record_field_access_chain().parse(arena, state, min_indent) {
+                    Ok((p2, field_accesses, state)) => {
+                        // if there are field accesses, include the parentheses in the region
+                        // otherwise, don't include the parentheses
+                        let loc_res = if field_accesses.is_empty() {
+                            loc_expr
+                        } else {
+                            let val =
+                                apply_expr_access_chain(arena, loc_expr.value, field_accesses);
+                            Loc::of(start, state.pos(), val)
+                        };
+                        Ok((p1.or(p2), loc_res, state))
+                    }
+                    Err((p2, err)) => Err((p1.or(p2), err)),
+                }
             }
-
-            Loc::at(region, value)
+            Err((p, err)) => Err((p, EExpr::InParens(err, start))),
         }
-    )
+    }
 }
 
 fn record_field_access_chain<'a>() -> impl Parser<'a, Vec<'a, Suffix<'a>>, EExpr<'a>> {
@@ -480,7 +479,8 @@ impl<'a> ExprState<'a> {
     fn validate_assignment_or_backpassing<F>(
         mut self,
         arena: &'a Bump,
-        loc_op: Loc<BinOp>,
+        op_start: Position,
+        op: BinOp,
         argument_error: F,
     ) -> Result<Loc<Expr<'a>>, EExpr<'a>>
     where
@@ -488,14 +488,13 @@ impl<'a> ExprState<'a> {
     {
         if !self.operators.is_empty() {
             // this `=` or `<-` likely occurred inline; treat it as an invalid operator
-            let opchar = match loc_op.value {
+            let op_char = match op {
                 BinOp::Assignment => "=",
                 BinOp::Backpassing => "<-",
                 _ => unreachable!(),
             };
 
-            let fail = EExpr::BadOperator(opchar, loc_op.region.start());
-
+            let fail = EExpr::BadOperator(op_char, op_start);
             Err(fail)
         } else if !self.expr.value.is_tag()
             && !self.expr.value.is_opaque()
@@ -503,40 +502,10 @@ impl<'a> ExprState<'a> {
             && !is_expr_suffixed(&self.expr.value)
         {
             let region = Region::across_all(self.arguments.iter().map(|v| &v.region));
-
-            Err(argument_error(region, loc_op.region.start()))
+            Err(argument_error(region, op_start))
         } else {
             self.consume_spaces(arena);
             Ok(to_call(arena, self.arguments, self.expr))
-        }
-    }
-
-    fn validate_is_type_def(
-        mut self,
-        arena: &'a Bump,
-        loc_op: Loc<BinOp>,
-        kind: AliasOrOpaque,
-    ) -> Result<(Loc<Expr<'a>>, Vec<'a, &'a Loc<Expr<'a>>>), EExpr<'a>> {
-        debug_assert_eq!(
-            loc_op.value,
-            match kind {
-                AliasOrOpaque::Alias => BinOp::IsAliasType,
-                AliasOrOpaque::Opaque => BinOp::IsOpaqueType,
-            }
-        );
-
-        if !self.operators.is_empty() {
-            // this `:`/`:=` likely occurred inline; treat it as an invalid operator
-            let op = match kind {
-                AliasOrOpaque::Alias => ":",
-                AliasOrOpaque::Opaque => ":=",
-            };
-            let fail = EExpr::BadOperator(op, loc_op.region.start());
-
-            Err(fail)
-        } else {
-            self.consume_spaces(arena);
-            Ok((self.expr, self.arguments))
         }
     }
 }
@@ -1629,8 +1598,8 @@ fn extract_tag_and_spaces<'a>(arena: &'a Bump, expr: Expr<'a>) -> Option<Spaces<
 fn finish_parsing_alias_or_opaque<'a>(
     min_indent: u32,
     options: ExprParseOptions,
-    expr_state: ExprState<'a>,
-    loc_op: Loc<BinOp>,
+    mut expr_state: ExprState<'a>,
+    op_start: Position,
     arena: &'a Bump,
     state: State<'a>,
     spaces_after_operator: &'a [CommentOrNewline<'a>],
@@ -1639,17 +1608,26 @@ fn finish_parsing_alias_or_opaque<'a>(
     let expr_region = expr_state.expr.region;
     let indented_more = min_indent + 1;
 
-    let (expr, arguments) = expr_state
-        .validate_is_type_def(arena, loc_op, kind)
-        .map_err(|fail| (MadeProgress, fail))?;
+    if !expr_state.operators.is_empty() {
+        // this `:`/`:=` likely occurred inline; treat it as an invalid operator
+        let op = match kind {
+            AliasOrOpaque::Alias => ":",
+            AliasOrOpaque::Opaque => ":=",
+        };
+        return Err((MadeProgress, EExpr::BadOperator(op, op_start)));
+    }
+
+    expr_state.consume_spaces(arena);
+    let expr = expr_state.expr;
+    let args = expr_state.arguments;
 
     let mut defs = Defs::default();
 
     let state = if let Some(tag) = extract_tag_and_spaces(arena, expr.value) {
         let name = tag.item;
-        let mut type_arguments = Vec::with_capacity_in(arguments.len(), arena);
+        let mut type_arguments = Vec::with_capacity_in(args.len(), arena);
 
-        for argument in arguments {
+        for argument in args {
             match expr_to_pattern_help(arena, &argument.value) {
                 Ok(good) => {
                     type_arguments.push(Loc::at(argument.region, good));
@@ -1711,7 +1689,7 @@ fn finish_parsing_alias_or_opaque<'a>(
             }
         }
     } else {
-        let call = to_call(arena, arguments, expr);
+        let call = to_call(arena, args, expr);
 
         match expr_to_pattern_help(arena, &call.value) {
             Ok(good) => {
@@ -1749,8 +1727,7 @@ fn finish_parsing_alias_or_opaque<'a>(
                     AliasOrOpaque::Alias => ":",
                     AliasOrOpaque::Opaque => ":=",
                 };
-                let fail = EExpr::BadOperator(op, loc_op.region.start());
-
+                let fail = EExpr::BadOperator(op, op_start);
                 return Err((MadeProgress, fail));
             }
         }
@@ -1941,8 +1918,9 @@ fn parse_expr_operator<'a>(
     // a `-` is unary if it is preceded by a space and not followed by a space
 
     let op = loc_op.value;
-    let op_start = loc_op.region.start();
-    let op_end = loc_op.region.end();
+    let op_at = loc_op.region;
+    let op_start = op_at.start();
+    let op_end = op_at.end();
     let new_start = state.pos();
     match op {
         BinOp::Minus if expr_state.end != op_start && op_end == new_start => {
@@ -1954,7 +1932,7 @@ fn parse_expr_operator<'a>(
             let arg = numeric_negate_expression(
                 arena,
                 initial_state,
-                loc_op.region,
+                op_at,
                 negated_expr,
                 expr_state.spaces_after,
             );
@@ -1979,7 +1957,7 @@ fn parse_expr_operator<'a>(
             let indented_more = line_indent + 1;
 
             let call = expr_state
-                .validate_assignment_or_backpassing(arena, loc_op, EExpr::ElmStyleFunction)
+                .validate_assignment_or_backpassing(arena, op_start, op, EExpr::ElmStyleFunction)
                 .map_err(|fail| (MadeProgress, fail))?;
 
             let (value_def, def_region, state) = {
@@ -2006,8 +1984,7 @@ fn parse_expr_operator<'a>(
                     }
                     Err(_) => {
                         // this `=` likely occurred inline; treat it as an invalid operator
-                        let fail = EExpr::BadOperator(arena.alloc("="), loc_op.region.start());
-
+                        let fail = EExpr::BadOperator(arena.alloc("="), op_start);
                         return Err((MadeProgress, fail));
                     }
                 }
@@ -2023,7 +2000,7 @@ fn parse_expr_operator<'a>(
             let indented_more = min_indent + 1;
 
             let call = expr_state
-                .validate_assignment_or_backpassing(arena, loc_op, |_, pos| {
+                .validate_assignment_or_backpassing(arena, op_start, op, |_, pos| {
                     EExpr::BadOperator("<-", pos)
                 })
                 .map_err(|fail| (MadeProgress, fail))?;
@@ -2045,8 +2022,7 @@ fn parse_expr_operator<'a>(
                     }
                     Err(_) => {
                         // this `=` likely occurred inline; treat it as an invalid operator
-                        let fail = EExpr::BadOperator("=", loc_op.region.start());
-
+                        let fail = EExpr::BadOperator("=", op_start);
                         return Err((MadeProgress, fail));
                     }
                 }
@@ -2068,7 +2044,7 @@ fn parse_expr_operator<'a>(
             min_indent,
             options,
             expr_state,
-            loc_op,
+            op_start,
             arena,
             state,
             spaces_after_operator,
@@ -3526,16 +3502,18 @@ fn apply_expr_access_chain<'a>(
 }
 
 fn string_like_literal_help<'a>() -> impl Parser<'a, Expr<'a>, EString<'a>> {
-    map_with_arena!(
-        crate::string_literal::parse_str_like_literal(),
-        |arena, lit| match lit {
+    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
+        let (p, lit, state) =
+            crate::string_literal::parse_str_like_literal().parse(arena, state, min_indent)?;
+        let expr = match lit {
             StrLikeLiteral::Str(s) => Expr::Str(s),
             StrLikeLiteral::SingleQuote(s) => {
                 // TODO: preserve the original escaping
                 Expr::SingleQuote(s.to_str_in(arena))
             }
-        }
-    )
+        };
+        Ok((p, expr, state))
+    }
 }
 
 fn positive_number_literal_help<'a>() -> impl Parser<'a, Expr<'a>, ENumber> {

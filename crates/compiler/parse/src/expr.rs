@@ -13,7 +13,7 @@ use crate::ident::{
     integer_ident, lowercase_ident, parse_ident, unqualified_ident, Accessor, Ident, Suffix,
 };
 use crate::module::module_name_help;
-use crate::number_literal::number_literal;
+use crate::number_literal::parse_number_base;
 use crate::parser::{
     self, backtrackable, byte, increment_min_indent, keyword, optional, reset_min_indent, sep_by1,
     set_min_indent, specialize_err, specialize_err_ref, then, two_bytes, EClosure, EExpect, EExpr,
@@ -214,11 +214,14 @@ fn parse_ident_seq<'a>(
 ) -> ParseResult<'a, Loc<Expr<'a>>, EExpr<'a>> {
     let (_, loc_ident, state) =
         loc!(assign_or_destructure_identifier()).parse(arena, state, min_indent)?;
+
     let expr = ident_to_expr(arena, loc_ident.value);
+
     let (_p, suffixes, state) = record_field_access_chain()
         .trace("record_field_access_chain")
         .parse(arena, state, min_indent)
         .map_err(|(_p, e)| (MadeProgress, e))?;
+
     let expr = apply_expr_access_chain(arena, expr, suffixes);
     Ok((MadeProgress, Loc::at(loc_ident.region, expr), state))
 }
@@ -226,18 +229,15 @@ fn parse_ident_seq<'a>(
 fn underscore_expression<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
         let start = state.pos();
-
-        let (_, _, next_state) = byte(b'_', EExpr::Underscore).parse(arena, state, min_indent)?;
-
-        let lowercase_ident_expr =
-            { specialize_err(move |_, _| EExpr::End(start), lowercase_ident()) };
-
-        let (_, output, final_state) =
-            optional(lowercase_ident_expr).parse(arena, next_state, min_indent)?;
-
-        match output {
-            Some(name) => Ok((MadeProgress, Expr::Underscore(name), final_state)),
-            None => Ok((MadeProgress, Expr::Underscore(""), final_state)),
+        if state.bytes().starts_with(b"_") {
+            let state = state.advance(1);
+            match lowercase_ident().parse(arena, state.clone(), min_indent) {
+                Ok((_, name, state)) => Ok((MadeProgress, Expr::Underscore(name), state)),
+                Err((NoProgress, _)) => Ok((NoProgress, Expr::Underscore(""), state)),
+                Err(_) => Err((MadeProgress, EExpr::End(start))),
+            }
+        } else {
+            Err((NoProgress, EExpr::Underscore(start)))
         }
     }
 }
@@ -257,9 +257,9 @@ fn loc_possibly_negative_or_negated_term<'a>(
             };
             if !followed_by_whitespace {
                 let state = state.advance(1);
-                let op_at = Region::new(start, state.pos());
                 match loc_term(options).parse(arena, state, min_indent) {
                     Ok((_, loc_expr, state)) => {
+                        let op_at = Region::new(start, state.pos());
                         let loc_expr =
                             numeric_negate_expression(arena, start_state, op_at, loc_expr, &[]);
                         return Ok((MadeProgress, loc_expr, state));
@@ -270,30 +270,12 @@ fn loc_possibly_negative_or_negated_term<'a>(
             }
         }
 
-        // TODO @perf it will duplicate check for the positive_number_literal_help as above loc_term
-        // TODO @perf it will duplicate the check for '-' as above
         let state = start_state.clone();
-        match number_literal().parse(arena, state, min_indent) {
-            Ok((p, literal, state)) => {
-                use crate::number_literal::NumLiteral::*;
-                let literal_expr = match literal {
-                    Num(s) => Expr::Num(s),
-                    Float(s) => Expr::Float(s),
-                    NonBase10Int {
-                        string,
-                        base,
-                        is_negative,
-                    } => Expr::NonBase10Int {
-                        string,
-                        base,
-                        is_negative,
-                    },
-                };
-                return Ok((p, Loc::of(start, state.pos(), literal_expr), state));
-            }
+        match positive_number_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
             Err(_) => {}
-        }
+        };
 
         let state = start_state.clone();
         match state.bytes().first() {
@@ -424,7 +406,7 @@ fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a
         };
 
         match space0_e(EExpr::IndentEnd).parse(arena, state.clone(), min_indent) {
-            Err((_, _)) => Ok((MadeProgress, expr.value, state)),
+            Err(_) => Ok((MadeProgress, expr.value, state)),
             Ok((_, spaces_before_op, state)) => {
                 let expr_state = ExprState {
                     operators: Vec::new_in(arena),
@@ -2228,44 +2210,7 @@ fn parse_expr_end<'a>(
             state,
         )) if matches!(expr_state.expr.value, Expr::Tag(..)) => {
             // This is an ability definition, `Ability arg1 ... implements ...`.
-
-            let name = expr_state.expr.map_owned(|e| match e {
-                Expr::Tag(name) => name,
-                _ => unreachable!(),
-            });
-
-            let mut arguments = Vec::with_capacity_in(expr_state.arguments.len(), arena);
-            for argument in expr_state.arguments {
-                match expr_to_pattern_help(arena, &argument.value) {
-                    Ok(good) => {
-                        arguments.push(Loc::at(argument.region, good));
-                    }
-                    Err(_) => {
-                        let start = argument.region.start();
-                        let err = &*arena.alloc(EPattern::Start(start));
-                        return Err((MadeProgress, EExpr::Pattern(err, argument.region.start())));
-                    }
-                }
-            }
-
-            // Attach any spaces to the `implements` keyword
-            let implements = if !expr_state.spaces_after.is_empty() {
-                arena
-                    .alloc(Implements::Implements)
-                    .with_spaces_before(expr_state.spaces_after, implements.region)
-            } else {
-                Loc::at(implements.region, Implements::Implements)
-            };
-
-            let args = arguments.into_bump_slice();
-            let (_, (type_def, def_region), state) =
-                finish_parsing_ability_def_help(min_indent, name, args, implements, arena, state)?;
-
-            let mut defs = Defs::default();
-
-            defs.push_type_def(type_def, def_region, &[], &[]);
-
-            parse_defs_expr(options, min_indent, defs, arena, state)
+            parse_implements(arena, state, min_indent, &expr_state, implements, options)
         }
         Ok((_, mut arg, state)) => {
             let new_end = state.pos();
@@ -2284,8 +2229,8 @@ fn parse_expr_end<'a>(
 
                 expr_state.spaces_after = &[];
             }
-            let initial_state = state.clone();
 
+            let initial_state = state.clone();
             match space0_e(EExpr::IndentEnd).parse(arena, state.clone(), min_indent) {
                 Err((_, _)) => {
                     expr_state.arguments.push(arena.alloc(arg));
@@ -2413,6 +2358,54 @@ fn parse_expr_end<'a>(
             }
         }
     }
+}
+
+fn parse_implements<'a>(
+    arena: &'a Bump,
+    state: State<'a>,
+    min_indent: u32,
+    expr_state: &ExprState<'a>,
+    implements: Loc<Expr<'a>>,
+    options: ExprParseOptions,
+) -> Result<(Progress, Expr<'a>, State<'a>), (Progress, EExpr<'a>)> {
+    let name = expr_state.expr.map_owned(|e| match e {
+        Expr::Tag(name) => name,
+        _ => unreachable!(),
+    });
+
+    let args = &expr_state.arguments;
+    let mut arguments = Vec::with_capacity_in(args.len(), arena);
+    for argument in args {
+        match expr_to_pattern_help(arena, &argument.value) {
+            Ok(good) => {
+                arguments.push(Loc::at(argument.region, good));
+            }
+            Err(_) => {
+                let start = argument.region.start();
+                let err = &*arena.alloc(EPattern::Start(start));
+                return Err((MadeProgress, EExpr::Pattern(err, argument.region.start())));
+            }
+        }
+    }
+
+    // Attach any spaces to the `implements` keyword
+    let implements = if !expr_state.spaces_after.is_empty() {
+        arena
+            .alloc(Implements::Implements)
+            .with_spaces_before(expr_state.spaces_after, implements.region)
+    } else {
+        Loc::at(implements.region, Implements::Implements)
+    };
+
+    let args = arguments.into_bump_slice();
+    let (_, (type_def, def_region), state) =
+        finish_parsing_ability_def_help(min_indent, name, args, implements, arena, state)?;
+
+    let mut defs = Defs::default();
+
+    defs.push_type_def(type_def, def_region, &[], &[]);
+
+    parse_defs_expr(options, min_indent, defs, arena, state)
 }
 
 pub fn loc_expr<'a>(accept_multi_backpassing: bool) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
@@ -3546,26 +3539,32 @@ fn string_like_literal_help<'a>() -> impl Parser<'a, Expr<'a>, EString<'a>> {
 }
 
 fn positive_number_literal_help<'a>() -> impl Parser<'a, Expr<'a>, ENumber> {
-    map!(
-        crate::number_literal::positive_number_literal(),
-        |literal| {
-            use crate::number_literal::NumLiteral::*;
-
-            match literal {
-                Num(s) => Expr::Num(s),
-                Float(s) => Expr::Float(s),
-                NonBase10Int {
-                    string,
-                    base,
-                    is_negative,
-                } => Expr::NonBase10Int {
-                    string,
-                    base,
-                    is_negative,
-                },
+    move |_arena, state: State<'a>, _min_indent| {
+        let res = match state.bytes().first() {
+            Some(b) if b.is_ascii_digit() => parse_number_base(false, state.bytes(), state),
+            _ => Err((Progress::NoProgress, ENumber::End)),
+        };
+        use crate::number_literal::NumLiteral::*;
+        match res {
+            Ok((p, literal, state)) => {
+                let expr = match literal {
+                    Num(s) => Expr::Num(s),
+                    Float(s) => Expr::Float(s),
+                    NonBase10Int {
+                        string,
+                        base,
+                        is_negative,
+                    } => Expr::NonBase10Int {
+                        string,
+                        base,
+                        is_negative,
+                    },
+                };
+                Ok((p, expr, state))
             }
+            Err(err) => Err(err),
         }
-    )
+    }
 }
 
 const BINOP_CHAR_SET: &[u8] = b"+-/*=.<>:&|^?%!";

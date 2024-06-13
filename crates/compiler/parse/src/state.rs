@@ -51,6 +51,7 @@ impl<'a> State<'a> {
     }
 
     /// Mutably advance the state by a given offset
+    #[inline(always)]
     pub(crate) fn advance_mut(&mut self, offset: usize) {
         self.offset += offset;
     }

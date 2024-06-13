@@ -44,7 +44,7 @@ pub fn number_literal<'a>() -> impl Parser<'a, NumLiteral<'a>, ENumber> {
     }
 }
 
-fn parse_number_base<'a>(
+pub fn parse_number_base<'a>(
     is_negated: bool,
     bytes: &'a [u8],
     state: State<'a>,

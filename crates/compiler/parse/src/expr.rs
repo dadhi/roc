@@ -2229,28 +2229,69 @@ fn parse_expr_end<'a>(
                     if options.accept_multi_backpassing && state.bytes().starts_with(b",") {
                         state = state.advance(1);
 
-                        let (_, mut patterns, state) = specialize_err_ref(
-                            EExpr::Pattern,
-                            crate::parser::sep_by0(
-                                byte(b',', EPattern::Start),
-                                space0_around_ee(
-                                    crate::pattern::loc_pattern_help(),
-                                    EPattern::Start,
-                                    EPattern::IndentEnd,
-                                ),
-                            ),
-                        )
-                        .parse(arena, state, min_indent)
-                        .map_err(|(progress, err)| {
-                            // We were expecting the end of an expression, and parsed a comma
-                            // therefore we are either on the LHS of backpassing or this is was
-                            // in an invalid position.
-                            if let EExpr::Pattern(EPattern::IndentEnd(_), pos) = err {
-                                (progress, EExpr::UnexpectedComma(pos.sub(1)))
-                            } else {
-                                (progress, err)
+                        // Parse zero or more patterns separated by comma
+                        let pattern = space0_around_ee(
+                            crate::pattern::loc_pattern_help(),
+                            EPattern::Start,
+                            EPattern::IndentEnd,
+                        );
+
+                        let start = state.pos();
+                        let start_state = state.clone();
+                        let start_bytes_len = state.bytes().len();
+
+                        let (_, mut patterns, state) = match pattern.parse(arena, state, min_indent)
+                        {
+                            Ok((elem_progress, first_output, next_state)) => {
+                                // in practice, we want elements to make progress
+                                debug_assert_eq!(elem_progress, MadeProgress);
+                                let mut state = next_state;
+                                let mut buf = Vec::with_capacity_in(1, arena);
+
+                                buf.push(first_output);
+
+                                let res = loop {
+                                    match state.bytes().first() {
+                                        Some(b) if *b == b',' => {
+                                            let s = state.advance(1);
+                                            match pattern.parse(arena, s.clone(), min_indent) {
+                                                Ok((elem_p, next_output, s)) => {
+                                                    // in practice, we want elements to make progress
+                                                    debug_assert_eq!(elem_p, MadeProgress);
+                                                    state = s;
+                                                    buf.push(next_output);
+                                                }
+                                                Err((_, err)) => {
+                                                    let p = Progress::from_lengths(
+                                                        start_bytes_len,
+                                                        s.bytes().len(),
+                                                    );
+                                                    break match err {
+                                                        EPattern::IndentEnd(_) => Err((
+                                                            p,
+                                                            EExpr::UnexpectedComma(start.sub(1)),
+                                                        )),
+                                                        _ => Err((
+                                                            p,
+                                                            EExpr::Pattern(arena.alloc(err), start),
+                                                        )),
+                                                    };
+                                                }
+                                            }
+                                        }
+                                        _ => break Ok((NoProgress, buf, state)),
+                                    }
+                                };
+                                res
                             }
-                        })?;
+                            Err((MadeProgress, EPattern::IndentEnd(_))) => {
+                                Err((MadeProgress, EExpr::UnexpectedComma(start.sub(1))))
+                            }
+                            Err((MadeProgress, err)) => {
+                                Err((MadeProgress, EExpr::Pattern(arena.alloc(err), start)))
+                            }
+                            Err(_) => Ok((NoProgress, Vec::new_in(arena), start_state)),
+                        }?;
 
                         expr_state.consume_spaces(arena);
                         let call = to_call(arena, expr_state.arguments, expr_state.expr);

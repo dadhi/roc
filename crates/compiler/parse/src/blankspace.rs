@@ -12,8 +12,8 @@ use roc_region::all::Region;
 
 pub fn space0_around_ee<'a, P, S, E>(
     parser: P,
-    indent_before_problem: fn(Position) -> E,
-    indent_after_problem: fn(Position) -> E,
+    indent_before: fn(Position) -> E,
+    indent_after: fn(Position) -> E,
 ) -> impl Parser<'a, Loc<S>, E>
 where
     S: 'a + Spaceable<'a>,
@@ -21,25 +21,19 @@ where
     E: 'a + SpaceProblem,
 {
     move |arena, state: State<'a>, min_indent| {
-        let (p_before, ident_before, state) =
-            space0_e(indent_before_problem).parse(arena, state, min_indent)?;
+        let (p_before, ident_out, state) =
+            space0_e(indent_before).parse(arena, state, min_indent)?;
 
-        let (p, p_output, state) = match parser.parse(arena, state, min_indent) {
+        match parser.parse(arena, state, min_indent) {
             Err((p, err)) => Err((p_before.or(p), err)),
-            res => res,
-        }?;
-
-        let (p_after, ident_after, state) =
-            match space0_e(indent_after_problem).parse(arena, state, min_indent) {
+            Ok((p, p_out, state)) => match space0_e(indent_after).parse(arena, state, min_indent) {
                 Err((p_after, err)) => Err((p.or(p_after), err)),
-                ok => ok,
-            }?;
-
-        Ok((
-            p.or(p_after),
-            spaces_around_help(arena, (ident_before, (p_output, ident_after))),
-            state,
-        ))
+                Ok((p_after, out_after, state)) => {
+                    let expr = spaces_around_help(arena, (ident_out, (p_out, out_after)));
+                    Ok((p.or(p_after), expr, state))
+                }
+            },
+        }
     }
 }
 

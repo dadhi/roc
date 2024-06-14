@@ -106,7 +106,7 @@ where
 
 fn spaces_around_help<'a, S>(
     arena: &'a Bump,
-    tuples: (
+    around: (
         &'a [CommentOrNewline<'a>],
         (Loc<S>, &'a [CommentOrNewline<'a>]),
     ),
@@ -114,29 +114,18 @@ fn spaces_around_help<'a, S>(
 where
     S: 'a + Spaceable<'a>,
 {
-    let (spaces_before, (loc_val, spaces_after)) = tuples;
-
-    if spaces_before.is_empty() {
-        if spaces_after.is_empty() {
-            loc_val
-        } else {
-            arena
-                .alloc(loc_val.value)
-                .with_spaces_after(spaces_after, loc_val.region)
-        }
-    } else if spaces_after.is_empty() {
-        arena
-            .alloc(loc_val.value)
-            .with_spaces_before(spaces_before, loc_val.region)
-    } else {
-        let wrapped_expr = arena
+    let (spaces_before, (mut loc_val, spaces_after)) = around;
+    if !spaces_after.is_empty() {
+        loc_val = arena
             .alloc(loc_val.value)
             .with_spaces_after(spaces_after, loc_val.region);
-
-        arena
-            .alloc(wrapped_expr.value)
-            .with_spaces_before(spaces_before, wrapped_expr.region)
     }
+    if !spaces_before.is_empty() {
+        loc_val = arena
+            .alloc(loc_val.value)
+            .with_spaces_before(spaces_before, loc_val.region);
+    }
+    loc_val
 }
 
 pub fn spaces_before<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
@@ -339,7 +328,7 @@ where
         if progress == NoProgress || state.column() >= min_indent {
             Ok((progress, newlines.into_bump_slice(), state))
         } else {
-            Err((progress, indent_problem(start)))
+            Err((MadeProgress, indent_problem(start)))
         }
     }
 }
@@ -357,7 +346,7 @@ where
 
         match consume_spaces(state, |_, space, _| newlines.push(space)) {
             Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
+            Err(err) => Err(err),
         }
     }
 }
@@ -373,7 +362,7 @@ where
             newlines.push(Loc::at(Region::between(start, end), space))
         }) {
             Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
+            Err(err) => Err(err),
         }
     }
 }

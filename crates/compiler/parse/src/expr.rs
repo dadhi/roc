@@ -385,9 +385,9 @@ fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, E
             Err(_) => {}
         };
         match expr_operator_chain(options).parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => return Err((NoProgress, EExpr::Start(start))),
+            Ok((p, expr, state)) => Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => Err((MadeProgress, err)),
+            Err(_) => Err((NoProgress, EExpr::Start(start))),
         }
     })
     .trace("expr_start")
@@ -1977,7 +1977,7 @@ fn parse_expr_operator<'a>(
             if !expr.is_tag()
                 && !expr.is_opaque()
                 && !expr_state.arguments.is_empty()
-                && !is_expr_suffixed(&expr)
+                && !is_expr_suffixed(expr)
             {
                 return Err((MadeProgress, EExpr::BadOperator("<-", op_start)));
             }
@@ -2640,6 +2640,10 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             return Err((NoProgress, EClosure::Start(state.pos())));
         }
 
+        if state.bytes().starts_with(b"\\>") {
+            todo!("TODO @wip closure pipe sugar")
+        }
+
         let (slash_progress, (), state) = match state.bytes().first() {
             Some(x) if *x == b'\\' => {
                 let state = state.advance(1);
@@ -2647,8 +2651,6 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             }
             _ => Err((NoProgress, EClosure::Start(state.pos()))),
         }?;
-
-        // TODO @wip avoid param parsing altogether if we have CLOSURE_PIPE_SUGAR
 
         let param_parser_ident = space0_around_ee(
             closure_param_pattern(),
@@ -2697,6 +2699,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         if !state.bytes().starts_with(b"->") {
             return Err((slash_progress, EClosure::Arrow(before_arrow)));
         }
+
         let state = state.advance(2);
 
         let (ident_p, space_list, state) =
@@ -3385,13 +3388,6 @@ fn record_field_expr<'a>() -> impl Parser<'a, RecordFieldExpr<'a>, ERecord<'a>> 
     )
 }
 
-fn record_updateable_identifier<'a>() -> impl Parser<'a, Expr<'a>, ERecord<'a>> {
-    specialize_err(
-        |_, pos| ERecord::Updateable(pos),
-        map_with_arena!(parse_ident, ident_to_expr),
-    )
-}
-
 struct RecordHelp<'a> {
     update: Option<Loc<Expr<'a>>>,
     fields: Collection<'a, Loc<RecordField<'a>>>,
@@ -3409,7 +3405,10 @@ fn record_help<'a>() -> impl Parser<'a, RecordHelp<'a>, ERecord<'a>> {
                     // so that we have a Spaceable value to work with,
                     // and then in canonicalization verify that it's an Expr::Var
                     // (and not e.g. an `Expr::Access`) and extract its string.
-                    loc!(record_updateable_identifier()),
+                    loc!(specialize_err(
+                        |_, pos| ERecord::Updateable(pos),
+                        map_with_arena!(parse_ident, ident_to_expr),
+                    )),
                 ),
                 byte(b'&', ERecord::Ampersand)
             ))),

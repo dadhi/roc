@@ -259,11 +259,11 @@ fn loc_possibly_negative_or_negated_term<'a>(
                 match loc_term(options).parse(arena, state, min_indent) {
                     Ok((_, loc_expr, state)) => {
                         let op_at = Region::new(start, state.pos());
-                        
+
                         // for overflow reasons, we must make the unary minus part of the number literal.
                         let region = Region::new(start_state.pos(), loc_expr.region.end());
                         let new_expr = num_negate(loc_expr, op_at, arena, start_state);
-                        
+
                         let loc_expr = Loc::at(region, new_expr);
 
                         return Ok((MadeProgress, loc_expr, state));
@@ -2205,23 +2205,21 @@ fn parse_expr_end<'a>(
             }
         }
         Err((NoProgress, _)) => {
-            let before_op = state.clone();
-            // try an operator
             let line_indent = state.line_indent();
-            let before_operator = state.pos();
+            let before_state = state.clone();
+            let before_start = state.pos();
             match operator().parse(arena, state.clone(), min_indent) {
                 Ok((_, op, state)) => {
                     expr_state.consume_spaces(arena);
-                    let initial_state = before_op;
                     parse_expr_operator(
                         min_indent,
                         options,
                         expr_state,
-                        Loc::of(before_operator, state.pos(), op),
+                        Loc::of(before_start, state.pos(), op),
                         line_indent,
                         arena,
                         state,
-                        initial_state,
+                        before_state,
                     )
                 }
                 Err((MadeProgress, f)) => Err((MadeProgress, f)),

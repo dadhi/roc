@@ -1088,8 +1088,7 @@ where
     Error: 'a,
 {
     move |arena, state: State<'a>, min_indent: u32| {
-        let original_state = state.clone();
-
+        let start_state = state.clone();
         let start_bytes_len = state.bytes().len();
 
         match parser.parse(arena, state, min_indent) {
@@ -1102,41 +1101,36 @@ where
 
                 buf.push(first_output);
 
-                loop {
+                let res = loop {
                     match delimiter.parse(arena, state.clone(), min_indent) {
                         Ok((_, (), next_state)) => {
                             // If the delimiter passed, check the element parser.
                             match parser.parse(arena, next_state.clone(), min_indent) {
-                                Ok((element_progress, next_output, next_state)) => {
+                                Ok((elem_p, next_output, next_state)) => {
                                     // in practice, we want elements to make progress
-                                    debug_assert_eq!(element_progress, MadeProgress);
-
+                                    debug_assert_eq!(elem_p, MadeProgress);
                                     state = next_state;
                                     buf.push(next_output);
                                 }
-                                Err((_, fail)) => {
+                                Err((_, err)) => {
                                     // If the delimiter parsed, but the following
                                     // element did not, that's a fatal error.
                                     let progress = Progress::from_lengths(
                                         start_bytes_len,
                                         next_state.bytes().len(),
                                     );
-
-                                    return Err((progress, fail));
+                                    break Err((progress, err));
                                 }
                             }
                         }
-                        Err((delim_progress, fail)) => match delim_progress {
-                            MadeProgress => return Err((MadeProgress, fail)),
-                            NoProgress => return Ok((NoProgress, buf, state)),
-                        },
+                        Err((MadeProgress, err)) => break Err((MadeProgress, err)),
+                        Err(_) => break Ok((NoProgress, buf, state)),
                     }
-                }
+                };
+                res
             }
-            Err((element_progress, fail)) => match element_progress {
-                MadeProgress => Err((MadeProgress, fail)),
-                NoProgress => Ok((NoProgress, Vec::new_in(arena), original_state)),
-            },
+            Err((MadeProgress, err)) => Err((MadeProgress, err)),
+            Err(_) => Ok((NoProgress, Vec::new_in(arena), start_state)),
         }
     }
 }

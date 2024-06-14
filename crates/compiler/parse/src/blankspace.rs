@@ -32,7 +32,7 @@ where
         let (p_after, ident_after, state) =
             match space0_e(indent_after_problem).parse(arena, state, min_indent) {
                 Err((p_after, err)) => Err((p.or(p_after), err)),
-                res => res,
+                ok => ok,
             }?;
 
         Ok((
@@ -175,20 +175,19 @@ where
     E: 'a + SpaceProblem,
 {
     move |arena, state: State<'a>, min_indent| {
-        let (ident_p, space_list, state) =
-            space0_e(indent_problem).parse(arena, state, min_indent)?;
+        let (ident_p, spaces, state) = space0_e(indent_problem).parse(arena, state, min_indent)?;
 
         let (_, loc_expr, state) = match parser.parse(arena, state, min_indent) {
             Err((p, err)) => Err((ident_p.or(p), err)),
-            res => res,
+            ok => ok,
         }?;
 
-        let out = if space_list.is_empty() {
+        let out = if spaces.is_empty() {
             loc_expr
         } else {
             arena
                 .alloc(loc_expr.value)
-                .with_spaces_before(space_list, loc_expr.region)
+                .with_spaces_before(spaces, loc_expr.region)
         };
 
         Ok((MadeProgress, out, state))

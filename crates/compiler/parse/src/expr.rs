@@ -2632,6 +2632,9 @@ pub fn parse_top_level_defs<'a>(
     Ok((MadeProgress, output, state))
 }
 
+const CLOSURE_PIPE_OPERAND: &[u8] = b"\\>";
+const CLOSURE_PIPE_PARAM: &str = "x42";
+
 fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClosure<'a>> {
     move |arena, state: State<'a>, _min_indent| {
         let start_indent = state.line_indent();
@@ -2640,7 +2643,20 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             return Err((NoProgress, EClosure::Start(state.pos())));
         }
 
-        if state.bytes().starts_with(b"\\>") {
+        if state.bytes().starts_with(CLOSURE_PIPE_OPERAND) {
+            // constructing:
+            //
+            // \x42->x42|>...
+            //
+            let param_state = state.advance(CLOSURE_PIPE_OPERAND.len());
+            let param_start = param_state.pos();
+            let arrow_state = param_state.advance(CLOSURE_PIPE_PARAM.len());
+            let param = Pattern::Identifier {
+                ident: &CLOSURE_PIPE_PARAM,
+            };
+            let loc_param = Loc::of(param_start, arrow_state.pos(), param);
+            dbg!("closure pipe param: ", loc_param);
+
             todo!("TODO @wip closure pipe sugar")
         }
 

@@ -4780,18 +4780,25 @@ mod test_fmt {
     fn simple_closure_with_pipe() {
         expr_formats_same(indoc!(
             r"
-                \o__ -> o__ |> Num.add 1
+                \x42 -> x42 |> Num.add 1
             "
         ));
     }
 
     #[test]
     fn simple_closure_with_pipe_sugar() {
-        expr_formats_same(indoc!(
-            r"
+        expr_formats_to(
+            indoc!(
+                r"
                 \> Num.add 1
             "
-        ));
+            ),
+            indoc!(
+                r"
+                \x42 -> x42 |> Num.add 1
+            "
+            ),
+        );
     }
 
     // MODULES

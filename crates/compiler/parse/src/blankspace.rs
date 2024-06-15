@@ -21,18 +21,28 @@ where
     E: 'a + SpaceProblem,
 {
     move |arena, state: State<'a>, min_indent| {
-        let (p_before, ident_out, state) =
-            space0_e(indent_before).parse(arena, state, min_indent)?;
+        let (p_before, before, state) = space0_e(indent_before).parse(arena, state, min_indent)?;
 
         match parser.parse(arena, state, min_indent) {
             Err((p, err)) => Err((p_before.or(p), err)),
-            Ok((p, p_out, state)) => match space0_e(indent_after).parse(arena, state, min_indent) {
-                Err((p_after, err)) => Err((p.or(p_after), err)),
-                Ok((p_after, out_after, state)) => {
-                    let expr = spaces_around_help(arena, (ident_out, (p_out, out_after)));
-                    Ok((p.or(p_after), expr, state))
+            Ok((p, mut loc_val, state)) => {
+                match space0_e(indent_after).parse(arena, state, min_indent) {
+                    Err((p_after, err)) => Err((p.or(p_after), err)),
+                    Ok((p_after, after, state)) => {
+                        if !after.is_empty() {
+                            loc_val = arena
+                                .alloc(loc_val.value)
+                                .with_spaces_after(after, loc_val.region);
+                        }
+                        if !before.is_empty() {
+                            loc_val = arena
+                                .alloc(loc_val.value)
+                                .with_spaces_before(before, loc_val.region);
+                        }
+                        Ok((p.or(p_after), loc_val, state))
+                    }
                 }
-            },
+            }
         }
     }
 }
@@ -160,20 +170,17 @@ where
     move |arena, state: State<'a>, min_indent| {
         let (ident_p, spaces, state) = space0_e(indent_problem).parse(arena, state, min_indent)?;
 
-        let (_, loc_expr, state) = match parser.parse(arena, state, min_indent) {
+        match parser.parse(arena, state, min_indent) {
             Err((p, err)) => Err((ident_p.or(p), err)),
-            ok => ok,
-        }?;
-
-        let out = if spaces.is_empty() {
-            loc_expr
-        } else {
-            arena
-                .alloc(loc_expr.value)
-                .with_spaces_before(spaces, loc_expr.region)
-        };
-
-        Ok((MadeProgress, out, state))
+            Ok((_, mut loc_expr, state)) => {
+                if !spaces.is_empty() {
+                    loc_expr = arena
+                        .alloc(loc_expr.value)
+                        .with_spaces_before(spaces, loc_expr.region)
+                };
+                Ok((MadeProgress, loc_expr, state))
+            }
+        }
     }
 }
 

@@ -2644,7 +2644,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
             todo!("TODO @wip closure pipe sugar")
         }
 
-        let (slash_progress, (), state) = match state.bytes().first() {
+        let (_, (), state) = match state.bytes().first() {
             Some(x) if *x == b'\\' => {
                 let state = state.advance(1);
                 Ok((MadeProgress, (), state))
@@ -2663,7 +2663,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
         let closure_min_indent = start_indent + 1;
         let (progress, first_param_pattern, first_param_state) =
             match param_parser_ident.parse(arena, state, closure_min_indent) {
-                Err((NoProgress, _)) => Err((slash_progress, EClosure::Arg(param_start_pos))),
+                Err((NoProgress, _)) => Err((MadeProgress, EClosure::Arg(param_start_pos))),
                 res => res,
             }?;
         debug_assert_eq!(progress, MadeProgress);
@@ -2681,7 +2681,7 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
                     let delim_pos = delim_state.pos();
                     let (_, next_pattern, next_state) =
                         match param_parser_ident.parse(arena, delim_state, closure_min_indent) {
-                            Err((NoProgress, _)) => Err((slash_progress, EClosure::Arg(delim_pos))),
+                            Err((NoProgress, _)) => Err((MadeProgress, EClosure::Arg(delim_pos))),
                             res => res,
                         }?;
                     param_patterns.push(next_pattern);
@@ -2697,31 +2697,27 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
 
         let before_arrow = state.pos();
         if !state.bytes().starts_with(b"->") {
-            return Err((slash_progress, EClosure::Arrow(before_arrow)));
+            return Err((MadeProgress, EClosure::Arrow(before_arrow)));
         }
 
         let state = state.advance(2);
 
-        let (ident_p, space_list, state) =
+        let (space_p, space_before, state) =
             space0_e(EClosure::IndentBody).parse(arena, state, closure_min_indent)?;
 
         let before_body = state.pos();
-        let (_, loc_expr, state) = match expr_start(options).parse(arena, state, closure_min_indent)
-        {
-            Err((p, err)) => Err((ident_p.or(p), EClosure::Body(arena.alloc(err), before_body))),
-            Ok(ok) => Ok(ok),
-        }?;
-
-        let body = if space_list.is_empty() {
-            loc_expr
-        } else {
-            arena
-                .alloc(loc_expr.value)
-                .with_spaces_before(space_list, loc_expr.region)
-        };
-
-        let closure_output = Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(body));
-        Ok((MadeProgress, closure_output, state))
+        match expr_start(options).parse(arena, state, closure_min_indent) {
+            Err((p, err)) => Err((space_p.or(p), EClosure::Body(arena.alloc(err), before_body))),
+            Ok((_, mut loc_expr, state)) => {
+                if !space_before.is_empty() {
+                    loc_expr = arena
+                        .alloc(loc_expr.value)
+                        .with_spaces_before(space_before, loc_expr.region);
+                }
+                let res = Expr::Closure(param_patterns.into_bump_slice(), arena.alloc(loc_expr));
+                Ok((MadeProgress, res, state))
+            }
+        }
     }
 }
 

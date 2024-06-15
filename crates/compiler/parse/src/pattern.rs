@@ -392,7 +392,7 @@ fn loc_ident_pattern_help<'a>(
             } => {
                 // Plain identifiers (e.g. `foo`) are allowed in patterns, but
                 // more complex ones (e.g. `Foo.bar` or `foo.bar.baz`) are not.
-
+                // TODO @wip this check is done twice here and before in `parse_ident`
                 for keyword in crate::keyword::KEYWORDS.iter() {
                     if parts[0] == Accessor::RecordField(keyword) {
                         return Err((NoProgress, EPattern::End(start)));
@@ -452,21 +452,20 @@ fn loc_ident_pattern_help<'a>(
 fn loc_underscore_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     move |arena, state: State<'a>, min_indent| {
         let start = state.pos();
-        let (underscore_p, _, underscore_state) =
-            byte(b'_', EPattern::Underscore).parse(arena, state, min_indent)?;
+        let (_, _, state) = byte(b'_', EPattern::Underscore).parse(arena, state, min_indent)?;
 
-        match lowercase_ident().parse(arena, underscore_state.clone(), min_indent) {
-            Ok((p, name, next_state)) => Ok((
-                underscore_p.or(p),
+        match lowercase_ident().parse(arena, state.clone(), min_indent) {
+            Ok((_, name, next_state)) => Ok((
+                MadeProgress,
                 Loc::of(start, next_state.pos(), Pattern::Underscore(name)),
                 next_state,
             )),
             Err((NoProgress, _)) => Ok((
-                underscore_p,
-                Loc::of(start, underscore_state.pos(), Pattern::Underscore("")),
-                underscore_state,
+                MadeProgress,
+                Loc::of(start, state.pos(), Pattern::Underscore("")),
+                state,
             )),
-            Err((MadeProgress, _)) => Err((MadeProgress, EPattern::End(start))),
+            Err(_) => Err((MadeProgress, EPattern::End(start))),
         }
     }
 }
@@ -475,12 +474,12 @@ fn loc_record_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'
     move |arena, state: State<'a>, min_indent| {
         let start = state.pos();
         match record_pattern_fields().parse(arena, state, min_indent) {
-            Ok((progress, output, next_state)) => Ok((
-                progress,
+            Ok((p, output, next_state)) => Ok((
+                p,
                 Loc::of(start, next_state.pos(), Pattern::RecordDestructure(output)),
                 next_state,
             )),
-            Err((progress, err)) => Err((progress, EPattern::Record(err, start))),
+            Err((p, err)) => Err((p, EPattern::Record(err, start))),
         }
     }
 }

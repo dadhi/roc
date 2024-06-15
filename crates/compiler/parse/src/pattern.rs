@@ -392,13 +392,6 @@ fn loc_ident_pattern_help<'a>(
             } => {
                 // Plain identifiers (e.g. `foo`) are allowed in patterns, but
                 // more complex ones (e.g. `Foo.bar` or `foo.bar.baz`) are not.
-                // TODO @wip this check is done twice here and before in `parse_ident`
-                for keyword in crate::keyword::KEYWORDS.iter() {
-                    if parts[0] == Accessor::RecordField(keyword) {
-                        return Err((NoProgress, EPattern::End(start)));
-                    }
-                }
-
                 if module_name.is_empty() && parts.len() == 1 {
                     if let Accessor::RecordField(var) = &parts[0] {
                         return Ok((

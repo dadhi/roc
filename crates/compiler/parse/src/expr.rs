@@ -202,7 +202,7 @@ fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EEx
         };
         parse_ident_seq
             .trace("ident_seq")
-            .parse(arena, state.clone(), min_indent)
+            .parse(arena, state, min_indent)
     }
 }
 
@@ -211,18 +211,22 @@ fn parse_ident_seq<'a>(
     state: State<'a>,
     min_indent: u32,
 ) -> ParseResult<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    let (_, loc_ident, state) =
-        loc!(assign_or_destructure_identifier()).parse(arena, state, min_indent)?;
+    let start = state.pos();
+    let (_, ident, state) = assign_or_destructure_identifier().parse(arena, state, min_indent)?;
 
-    let expr = ident_to_expr(arena, loc_ident.value);
+    let ident_at = Region::new(start, state.pos());
+    let expr = ident_to_expr(arena, ident);
 
-    let (_p, suffixes, state) = record_field_access_chain()
+    match record_field_access_chain()
         .trace("record_field_access_chain")
         .parse(arena, state, min_indent)
-        .map_err(|(_p, e)| (MadeProgress, e))?;
-
-    let expr = apply_expr_access_chain(arena, expr, suffixes);
-    Ok((MadeProgress, Loc::at(loc_ident.region, expr), state))
+    {
+        Ok((_, suffixes, state)) => {
+            let expr = apply_expr_access_chain(arena, expr, suffixes);
+            Ok((MadeProgress, Loc::at(ident_at, expr), state))
+        }
+        Err((_, e)) => Err((MadeProgress, e)),
+    }
 }
 
 fn underscore_expression<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
@@ -245,61 +249,17 @@ fn loc_possibly_negative_or_negated_term<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let start_state = state.clone();
-        let start = state.pos();
-
-        // check for the numeric unary negate operator '-'
-        if state.bytes().starts_with(b"-") {
-            let followed_by_whitespace = match state.bytes().get(1) {
-                Some(b) => b.is_ascii_whitespace() || *b == b'#',
-                _ => false,
-            };
-            if !followed_by_whitespace {
-                let state = state.advance(1);
-                match loc_term(options).parse(arena, state, min_indent) {
-                    Ok((_, loc_expr, state)) => {
-                        let op_at = Region::new(start, state.pos());
-
-                        // for overflow reasons, we must make the unary minus part of the number literal.
-                        let region = Region::new(start_state.pos(), loc_expr.region.end());
-                        let new_expr = num_negate(loc_expr, op_at, arena, start_state);
-
-                        let loc_expr = Loc::at(region, new_expr);
-
-                        return Ok((MadeProgress, loc_expr, state));
-                    }
-                    Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-                    Err(_) => {}
-                }
-            }
+        if let Some(r) = infix_minus_or_negate_expr(state.clone(), options, arena, min_indent) {
+            return r;
         }
 
-        let state = start_state.clone();
-        match positive_number_literal_help().parse(arena, state.clone(), min_indent) {
+        let start_state = state.clone();
+        let start = state.pos();
+        match positive_number_literal_help().parse(arena, start_state.clone(), min_indent) {
             Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
             Err(_) => {}
         };
-
-        let state = start_state.clone();
-        match state.bytes().first() {
-            Some(b) if *b == b'!' => {
-                let state = state.advance(1);
-                let bang_at = Region::new(start, state.pos());
-                match space0_before_e(loc_term(options), EExpr::IndentStart)
-                    .parse(arena, state, min_indent)
-                {
-                    Ok((_, expr, state)) => {
-                        let expr = Expr::UnaryOp(arena.alloc(expr), Loc::at(bang_at, UnaryOp::Not));
-                        return Ok((MadeProgress, Loc::of(start, state.pos(), expr), state));
-                    }
-                    Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-                    Err(_) => {}
-                }
-            }
-            _ => {}
-        }
-
         match loc_expr_in_parens_etc_help().parse(arena, start_state.clone(), min_indent) {
             Ok(ok) => return Ok(ok),
             Err((MadeProgress, err)) => return Err((MadeProgress, err)),
@@ -351,8 +311,60 @@ fn loc_possibly_negative_or_negated_term<'a>(
     }
 }
 
+fn infix_minus_or_negate_expr<'a>(
+    state: State<'a>,
+    options: ExprParseOptions,
+    arena: &'a Bump,
+    min_indent: u32,
+) -> Option<Result<(Progress, Loc<Expr<'a>>, State<'a>), (Progress, EExpr<'a>)>> {
+    let start_state = state.clone();
+    let start = state.pos();
+
+    // check for the numeric unary negate operator '-'
+    if state.bytes().starts_with(b"-") {
+        let followed_by_whitespace = match state.bytes().get(1) {
+            Some(b) => b.is_ascii_whitespace() || *b == b'#',
+            _ => false,
+        };
+        if !followed_by_whitespace {
+            let state = state.advance(1);
+            match loc_term(options).parse(arena, state, min_indent) {
+                Ok((_, loc_expr, state)) => {
+                    let op_at = Region::new(start, state.pos());
+
+                    // for overflow reasons, we must make the unary minus part of the number literal.
+                    let region = Region::new(start_state.pos(), loc_expr.region.end());
+                    let expr = num_negate(loc_expr, op_at, arena, start_state);
+
+                    return Some(Ok((MadeProgress, Loc::at(region, expr), state)));
+                }
+                Err((MadeProgress, err)) => return Some(Err((MadeProgress, err))),
+                Err(_) => {}
+            }
+        }
+    }
+
+    // check for the boolean negation operator '!'
+    let state = start_state.clone();
+    if state.bytes().starts_with(b"!") {
+        let state = state.advance(1);
+        let bang_at = Region::new(start, state.pos());
+        match space0_before_e(loc_term(options), EExpr::IndentStart).parse(arena, state, min_indent)
+        {
+            Ok((_, expr, state)) => {
+                let expr = Expr::UnaryOp(arena.alloc(expr), Loc::at(bang_at, UnaryOp::Not));
+                return Some(Ok((MadeProgress, Loc::of(start, state.pos(), expr), state)));
+            }
+            Err((MadeProgress, err)) => return Some(Err((MadeProgress, err))),
+            Err(_) => {}
+        }
+    }
+
+    None
+}
+
 fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    (move |arena, state: State<'a>, min_indent| {
+    (move |arena, state: State<'a>, mut min_indent| {
         let start = state.pos();
         match if_expr_help(options).parse(arena, state.clone(), min_indent) {
             Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
@@ -384,21 +396,17 @@ fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, E
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
             Err(_) => {}
         };
-        match expr_operator_chain(options).parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => Err((MadeProgress, err)),
-            Err(_) => Err((NoProgress, EExpr::Start(start))),
-        }
-    })
-    .trace("expr_start")
-}
 
-fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
-    move |arena, state: State<'a>, min_indent: u32| {
-        let min_indent = std::cmp::max(state.line_indent(), min_indent);
+        let line_indent = state.line_indent();
+        if line_indent > min_indent {
+            min_indent = line_indent;
+        }
 
         let (_, expr, state) =
-            loc_possibly_negative_or_negated_term(options).parse(arena, state, min_indent)?;
+            match loc_possibly_negative_or_negated_term(options).parse(arena, state, min_indent) {
+                Err((NoProgress, _)) => Err((NoProgress, EExpr::Start(start))),
+                res => res,
+            }?;
 
         let initial_state = state.clone();
         let end = state.pos();
@@ -409,7 +417,7 @@ fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a
             min_indent
         };
 
-        match space0_e(EExpr::IndentEnd).parse(arena, state.clone(), min_indent) {
+        let res = match space0_e(EExpr::IndentEnd).parse(arena, state.clone(), min_indent) {
             Err(_) => Ok((MadeProgress, expr.value, state)),
             Ok((_, spaces_before_op, state)) => {
                 let expr_state = ExprState {
@@ -428,28 +436,29 @@ fn expr_operator_chain<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a
                     state,
                     initial_state,
                 ) {
-                    Err(err) => Err(err),
-                    Ok((progress, expr, new_state)) => {
+                    Ok((_, expr, new_state)) if is_expr_suffixed(&expr) => {
                         // We need to check if we have just parsed a suffixed statement,
                         // if so, this is a defs node.
-                        if is_expr_suffixed(&expr) {
-                            let def_region = Region::new(end, new_state.pos());
-                            let value_def = ValueDef::Stmt(arena.alloc(Loc::at(def_region, expr)));
+                        let def_at = Region::new(end, new_state.pos());
+                        let value_def = ValueDef::Stmt(arena.alloc(Loc::at(def_at, expr)));
 
-                            let mut defs = Defs::default();
-                            defs.push_value_def(value_def, def_region, &[], &[]);
+                        let mut defs = Defs::default();
+                        defs.push_value_def(value_def, def_at, &[], &[]);
 
-                            parse_defs_expr(options, min_indent, defs, arena, new_state)
-                        } else {
-                            Ok((progress, expr, new_state))
-                        }
+                        parse_defs_expr(options, min_indent, defs, arena, new_state)
                     }
+                    res => res,
                 }
             }
+        };
+        match res {
+            Ok((p, expr, state)) => Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => Err((MadeProgress, err)),
+            Err(_) => Err((NoProgress, EExpr::Start(start))),
         }
-    }
+    })
+    .trace("expr_start")
 }
-
 #[derive(Debug)]
 struct ExprState<'a> {
     operators: Vec<'a, (Loc<Expr<'a>>, Loc<BinOp>)>,
@@ -3050,13 +3059,16 @@ fn dbg_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EExpect<
 
 fn import_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let (_, (import_def, spaces_after), state) =
-            specialize_err(EExpr::Import, import()).parse(arena, state, min_indent)?;
+        let start = state.pos();
+        match import().parse(arena, state, min_indent) {
+            Ok((_, (import_def, spaces_after), state)) => {
+                let mut defs = Defs::default();
+                defs.push_value_def(import_def.value, import_def.region, &[], spaces_after);
 
-        let mut defs = Defs::default();
-        defs.push_value_def(import_def.value, import_def.region, &[], spaces_after);
-
-        parse_defs_expr(options, min_indent, defs, arena, state)
+                parse_defs_expr(options, min_indent, defs, arena, state)
+            }
+            Err((p, err)) => Err((p, EExpr::Import(err, start))),
+        }
     }
 }
 
@@ -3083,7 +3095,7 @@ fn if_expr_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EIf<
             );
 
             match optional_if.parse(arena, state.clone(), min_indent) {
-                Err((_, _)) => break state,
+                Err(_) => break state,
                 Ok((_, _, state)) => {
                     loop_state = state;
                     continue;
@@ -3091,17 +3103,21 @@ fn if_expr_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EIf<
             }
         };
 
-        match space0_before_e(
-            specialize_err_ref(EIf::ElseBranch, expr_start(options)),
-            EIf::IndentElseBranch,
-        )
-        .parse(arena, state_final_else, min_indent)
-        {
-            Ok((_, else_branch, state)) => {
-                let expr = Expr::If(branches.into_bump_slice(), arena.alloc(else_branch));
+        let (ident_p, spaces, state) =
+            space0_e(EIf::IndentElseBranch).parse(arena, state_final_else, min_indent)?;
+
+        let start = state.pos();
+        match expr_start(options).parse(arena, state, min_indent) {
+            Err((p, err)) => Err((ident_p.or(p), EIf::ElseBranch(arena.alloc(err), start))),
+            Ok((_, mut loc_expr, state)) => {
+                if !spaces.is_empty() {
+                    loc_expr = arena
+                        .alloc(loc_expr.value)
+                        .with_spaces_before(spaces, loc_expr.region)
+                };
+                let expr = Expr::If(branches.into_bump_slice(), arena.alloc(loc_expr));
                 Ok((MadeProgress, expr, state))
             }
-            Err((_, f)) => Err((MadeProgress, f)),
         }
     }
 }

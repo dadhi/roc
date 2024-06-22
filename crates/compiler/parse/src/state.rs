@@ -1,8 +1,6 @@
 use roc_region::all::{Position, Region};
 use std::fmt;
 
-use crate::parser::Progress;
-
 /// A position in a source file.
 // NB: [Copy] is explicitly NOT derived to reduce the chance of bugs due to accidentally re-using
 // parser state.
@@ -50,20 +48,6 @@ impl<'a> State<'a> {
 
     pub fn line_indent(&self) -> u32 {
         self.line_start_after_whitespace.offset - self.line_start.offset
-    }
-
-    /// Check that the indent is at least `indent` spaces.
-    /// Return a new indent if the current indent is greater than `indent`.
-    pub fn check_indent<E>(
-        &self,
-        indent: u32,
-        e: impl Fn(Position) -> E,
-    ) -> Result<u32, (Progress, E)> {
-        if self.column() < indent {
-            Err((Progress::NoProgress, e(self.pos())))
-        } else {
-            Ok(std::cmp::max(indent, self.line_indent()))
-        }
     }
 
     /// Mutably advance the state by a given offset

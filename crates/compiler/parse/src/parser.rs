@@ -1076,71 +1076,6 @@ where
     }
 }
 
-/// Parse zero or more values separated by a delimiter (e.g. a comma) whose
-/// values are discarded
-pub fn sep_by0<'a, P, D, Val, Error>(
-    delimiter: D,
-    parser: P,
-) -> impl Parser<'a, Vec<'a, Val>, Error>
-where
-    D: Parser<'a, (), Error>,
-    P: Parser<'a, Val, Error>,
-    Error: 'a,
-{
-    move |arena, state: State<'a>, min_indent: u32| {
-        let original_state = state.clone();
-
-        let start_bytes_len = state.bytes().len();
-
-        match parser.parse(arena, state, min_indent) {
-            Ok((elem_progress, first_output, next_state)) => {
-                // in practice, we want elements to make progress
-                debug_assert_eq!(elem_progress, MadeProgress);
-
-                let mut state = next_state;
-                let mut buf = Vec::with_capacity_in(1, arena);
-
-                buf.push(first_output);
-
-                loop {
-                    match delimiter.parse(arena, state.clone(), min_indent) {
-                        Ok((_, (), next_state)) => {
-                            // If the delimiter passed, check the element parser.
-                            match parser.parse(arena, next_state.clone(), min_indent) {
-                                Ok((element_progress, next_output, next_state)) => {
-                                    // in practice, we want elements to make progress
-                                    debug_assert_eq!(element_progress, MadeProgress);
-
-                                    state = next_state;
-                                    buf.push(next_output);
-                                }
-                                Err((_, fail)) => {
-                                    // If the delimiter parsed, but the following
-                                    // element did not, that's a fatal error.
-                                    let progress = Progress::from_lengths(
-                                        start_bytes_len,
-                                        next_state.bytes().len(),
-                                    );
-
-                                    return Err((progress, fail));
-                                }
-                            }
-                        }
-                        Err((delim_progress, fail)) => match delim_progress {
-                            MadeProgress => return Err((MadeProgress, fail)),
-                            NoProgress => return Ok((NoProgress, buf, state)),
-                        },
-                    }
-                }
-            }
-            Err((element_progress, fail)) => match element_progress {
-                MadeProgress => Err((MadeProgress, fail)),
-                NoProgress => Ok((NoProgress, Vec::new_in(arena), original_state)),
-            },
-        }
-    }
-}
-
 /// Parse zero or more values separated by a delimiter (e.g. a comma)
 /// with an optional trailing delimiter whose values are discarded
 pub fn trailing_sep_by0<'a, P, D, Val, Error>(
@@ -1263,74 +1198,6 @@ where
     }
 }
 
-/// Parse one or more values separated by a delimiter (e.g. a comma) whose
-/// values are discarded
-pub fn sep_by1_e<'a, P, V, D, Val, Error>(
-    delimiter: D,
-    parser: P,
-    to_element_error: V,
-) -> impl Parser<'a, Vec<'a, Val>, Error>
-where
-    D: Parser<'a, (), Error>,
-    P: Parser<'a, Val, Error>,
-    V: Fn(Position) -> Error,
-    Error: 'a,
-{
-    move |arena, state: State<'a>, min_indent: u32| {
-        let original_state = state.clone();
-        let start_bytes_len = state.bytes().len();
-
-        match parser.parse(arena, state, min_indent) {
-            Ok((progress, first_output, next_state)) => {
-                debug_assert_eq!(progress, MadeProgress);
-                let mut state = next_state;
-                let mut buf = Vec::with_capacity_in(1, arena);
-
-                buf.push(first_output);
-
-                loop {
-                    let old_state = state.clone();
-                    match delimiter.parse(arena, state, min_indent) {
-                        Ok((_, (), next_state)) => {
-                            // If the delimiter passed, check the element parser.
-                            match parser.parse(arena, next_state.clone(), min_indent) {
-                                Ok((_, next_output, next_state)) => {
-                                    state = next_state;
-                                    buf.push(next_output);
-                                }
-                                Err((MadeProgress, fail)) => {
-                                    return Err((MadeProgress, fail));
-                                }
-                                Err((NoProgress, _fail)) => {
-                                    return Err((NoProgress, to_element_error(next_state.pos())));
-                                }
-                            }
-                        }
-                        Err((delim_progress, fail)) => {
-                            match delim_progress {
-                                MadeProgress => {
-                                    // fail if the delimiter made progress
-                                    return Err((MadeProgress, fail));
-                                }
-                                NoProgress => {
-                                    let progress = Progress::from_lengths(
-                                        start_bytes_len,
-                                        old_state.bytes().len(),
-                                    );
-                                    return Ok((progress, buf, old_state));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
-            Err((NoProgress, _fail)) => Err((NoProgress, to_element_error(original_state.pos()))),
-        }
-    }
-}
-
 /// Make the given parser optional, it can complete or not consume anything,
 /// but it can't error with progress made.
 ///
@@ -1419,9 +1286,7 @@ macro_rules! loc {
 
             match $parser.parse(arena, state, min_indent) {
                 Ok((progress, value, state)) => {
-                    let end = state.pos();
-                    let region = Region::new(start, end);
-
+                    let region = Region::new(start, state.pos());
                     Ok((progress, Loc { region, value }, state))
                 }
                 Err(err) => Err(err),
@@ -1713,7 +1578,7 @@ macro_rules! and {
                 Ok((p2, out2, state)) => Ok((p1.or(p2), (out1, out2), state)),
                 Err((p2, fail)) => Err((p1.or(p2), fail)),
             },
-            Err((progress, fail)) => Err((progress, fail)),
+            Err(err) => Err(err),
         }
     };
 }
@@ -1895,16 +1760,6 @@ where
     move |arena, state, min_indent| parser.parse(arena, state, min_indent + 1)
 }
 
-pub fn line_min_indent<'a, P, T, X: 'a>(parser: P) -> impl Parser<'a, T, X>
-where
-    P: Parser<'a, T, X>,
-{
-    move |arena, state: State<'a>, min_indent| {
-        let min_indent = std::cmp::max(state.line_indent(), min_indent);
-        parser.parse(arena, state, min_indent)
-    }
-}
-
 pub fn absolute_column_min_indent<'a, P, T, X: 'a>(parser: P) -> impl Parser<'a, T, X>
 where
     P: Parser<'a, T, X>,
@@ -1947,10 +1802,10 @@ where
     Y: 'a,
 {
     move |a, state: State<'a>, min_indent| {
-        let original_state = state.clone();
+        let original_pos = state.pos();
         match parser.parse(a, state, min_indent) {
             Ok(t) => Ok(t),
-            Err((p, error)) => Err((p, map_error(error, original_state.pos()))),
+            Err((p, error)) => Err((p, map_error(error, original_pos))),
         }
     }
 }
@@ -1989,11 +1844,11 @@ where
     Y: 'a,
     X: 'a,
 {
-    move |a, state: State<'a>, min_indent| {
-        let original_state = state.clone();
-        match parser.parse(a, state, min_indent) {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match parser.parse(arena, state, min_indent) {
             Ok(t) => Ok(t),
-            Err((p, error)) => Err((p, map_error(a.alloc(error), original_state.pos()))),
+            Err((p, error)) => Err((p, map_error(arena.alloc(error), start))),
         }
     }
 }
@@ -2087,60 +1942,6 @@ where
     }
 }
 
-/// Matches a single `u8` and moves the state's position forward if it succeeds.
-/// This parser will fail if it is a lower indentation level than it should be.
-///
-/// # Example
-///
-/// ```
-/// # #![forbid(unused_imports)]
-/// # use roc_parse::state::State;
-/// # use crate::roc_parse::parser::{Parser, Progress, byte, byte_indent};
-/// # use roc_region::all::Position;
-/// # use bumpalo::Bump;
-/// # #[derive(Debug, PartialEq)]
-/// # enum Problem {
-/// #     NotFound(Position),
-/// #     WrongIndentLevel(Position),
-/// # }
-/// # let arena = Bump::new();
-/// let parser = byte_indent(b'h', Problem::WrongIndentLevel);
-///
-/// // Success case
-/// let (progress, output, state) = parser.parse(&arena, State::new("hello, world".as_bytes()), 0).unwrap();
-/// assert_eq!(progress, Progress::MadeProgress);
-/// assert_eq!(output, ());
-/// assert_eq!(state.pos(), Position::new(1));
-///
-/// // Error case
-/// let state = State::new(" hello, world".as_bytes());
-/// let _ = byte(b' ', Problem::NotFound).parse(&arena, state.clone(), 0).unwrap();
-/// let (progress, problem) = parser.parse(&arena, state, 0).unwrap_err();
-/// assert_eq!(progress, Progress::NoProgress);
-/// assert_eq!(problem, Problem::WrongIndentLevel(Position::zero()));
-/// ```
-pub fn byte_indent<'a, ToError, E>(byte_to_match: u8, to_error: ToError) -> impl Parser<'a, (), E>
-where
-    ToError: Fn(Position) -> E,
-    E: 'a,
-{
-    debug_assert_ne!(byte_to_match, b'\n');
-
-    move |_arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        if min_indent > state.column() {
-            return Err((NoProgress, to_error(state.pos())));
-        }
-
-        match state.bytes().first() {
-            Some(x) if *x == byte_to_match => {
-                let state = state.advance(1);
-                Ok((MadeProgress, (), state))
-            }
-            _ => Err((NoProgress, to_error(state.pos()))),
-        }
-    }
-}
-
 /// Matches two `u8` in a row.
 ///
 /// # Example
@@ -2156,7 +1957,7 @@ where
 /// #     NotFound(Position),
 /// # }
 /// # let arena = Bump::new();
-/// let parser = two_bytes(b'h', b'e', Problem::NotFound);
+/// let parser = two_bytes(b"he", Problem::NotFound);
 ///
 /// // Success case
 /// let (progress, output, state) = parser.parse(&arena, State::new("hello, world".as_bytes()), 0).unwrap();
@@ -2169,22 +1970,13 @@ where
 /// assert_eq!(progress, Progress::NoProgress);
 /// assert_eq!(problem, Problem::NotFound(Position::zero()));
 /// ```
-pub fn two_bytes<'a, ToError, E>(
-    byte_1: u8,
-    byte_2: u8,
-    to_error: ToError,
-) -> impl Parser<'a, (), E>
+pub fn two_bytes<'a, ToError, E>(bytes: &'a [u8; 2], to_error: ToError) -> impl Parser<'a, (), E>
 where
     ToError: Fn(Position) -> E,
     E: 'a,
 {
-    debug_assert_ne!(byte_1, b'\n');
-    debug_assert_ne!(byte_2, b'\n');
-
-    let needle = [byte_1, byte_2];
-
     move |_arena: &'a Bump, state: State<'a>, _min_indent: u32| {
-        if state.bytes().starts_with(&needle) {
+        if state.bytes().starts_with(bytes) {
             let state = state.advance(2);
             Ok((MadeProgress, (), state))
         } else {
@@ -2245,16 +2037,6 @@ where
             Err((NoProgress, to_error(state.pos())))
         }
     }
-}
-
-#[macro_export]
-macro_rules! byte_check_indent {
-    ($byte_to_match:expr, $problem:expr, $min_indent:expr, $indent_problem:expr) => {
-        and!(
-            byte($byte_to_match, $problem),
-            $crate::parser::check_indent($min_indent, $indent_problem)
-        )
-    };
 }
 
 /// transform the `Ok` result of a parser

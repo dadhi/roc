@@ -12,21 +12,39 @@ use roc_region::all::Region;
 
 pub fn space0_around_ee<'a, P, S, E>(
     parser: P,
-    indent_before_problem: fn(Position) -> E,
-    indent_after_problem: fn(Position) -> E,
+    indent_before: fn(Position) -> E,
+    indent_after: fn(Position) -> E,
 ) -> impl Parser<'a, Loc<S>, E>
 where
     S: 'a + Spaceable<'a>,
     P: 'a + Parser<'a, Loc<S>, E>,
     E: 'a + SpaceProblem,
 {
-    parser::map_with_arena(
-        and(
-            space0_e(indent_before_problem),
-            and(parser, space0_e(indent_after_problem)),
-        ),
-        spaces_around_help,
-    )
+    move |arena, state: State<'a>, min_indent| {
+        let (p_before, before, state) = space0_e(indent_before).parse(arena, state, min_indent)?;
+
+        match parser.parse(arena, state, min_indent) {
+            Err((p, err)) => Err((p_before.or(p), err)),
+            Ok((p, mut loc_val, state)) => {
+                match space0_e(indent_after).parse(arena, state, min_indent) {
+                    Err((p_after, err)) => Err((p.or(p_after), err)),
+                    Ok((p_after, after, state)) => {
+                        if !after.is_empty() {
+                            loc_val = arena
+                                .alloc(loc_val.value)
+                                .with_spaces_after(after, loc_val.region);
+                        }
+                        if !before.is_empty() {
+                            loc_val = arena
+                                .alloc(loc_val.value)
+                                .with_spaces_before(before, loc_val.region);
+                        }
+                        Ok((p.or(p_after), loc_val, state))
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn spaces_around<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
@@ -98,7 +116,7 @@ where
 
 fn spaces_around_help<'a, S>(
     arena: &'a Bump,
-    tuples: (
+    around: (
         &'a [CommentOrNewline<'a>],
         (Loc<S>, &'a [CommentOrNewline<'a>]),
     ),
@@ -106,29 +124,18 @@ fn spaces_around_help<'a, S>(
 where
     S: 'a + Spaceable<'a>,
 {
-    let (spaces_before, (loc_val, spaces_after)) = tuples;
-
-    if spaces_before.is_empty() {
-        if spaces_after.is_empty() {
-            loc_val
-        } else {
-            arena
-                .alloc(loc_val.value)
-                .with_spaces_after(spaces_after, loc_val.region)
-        }
-    } else if spaces_after.is_empty() {
-        arena
-            .alloc(loc_val.value)
-            .with_spaces_before(spaces_before, loc_val.region)
-    } else {
-        let wrapped_expr = arena
+    let (spaces_before, (mut loc_val, spaces_after)) = around;
+    if !spaces_after.is_empty() {
+        loc_val = arena
             .alloc(loc_val.value)
             .with_spaces_after(spaces_after, loc_val.region);
-
-        arena
-            .alloc(wrapped_expr.value)
-            .with_spaces_before(spaces_before, wrapped_expr.region)
     }
+    if !spaces_before.is_empty() {
+        loc_val = arena
+            .alloc(loc_val.value)
+            .with_spaces_before(spaces_before, loc_val.region);
+    }
+    loc_val
 }
 
 pub fn spaces_before<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
@@ -160,18 +167,21 @@ where
     P: 'a + Parser<'a, Loc<S>, E>,
     E: 'a + SpaceProblem,
 {
-    parser::map_with_arena(
-        and!(space0_e(indent_problem), parser),
-        |arena: &'a Bump, (space_list, loc_expr): (&'a [CommentOrNewline<'a>], Loc<S>)| {
-            if space_list.is_empty() {
-                loc_expr
-            } else {
-                arena
-                    .alloc(loc_expr.value)
-                    .with_spaces_before(space_list, loc_expr.region)
+    move |arena, state: State<'a>, min_indent| {
+        let (ident_p, spaces, state) = space0_e(indent_problem).parse(arena, state, min_indent)?;
+
+        match parser.parse(arena, state, min_indent) {
+            Err((p, err)) => Err((ident_p.or(p), err)),
+            Ok((_, mut loc_expr, state)) => {
+                if !spaces.is_empty() {
+                    loc_expr = arena
+                        .alloc(loc_expr.value)
+                        .with_spaces_before(spaces, loc_expr.region)
+                };
+                Ok((MadeProgress, loc_expr, state))
             }
-        },
-    )
+        }
+    }
 }
 
 pub fn space0_after_e<'a, P, S, E>(
@@ -195,19 +205,6 @@ where
             }
         },
     )
-}
-
-pub fn check_indent<'a, E>(indent_problem: fn(Position) -> E) -> impl Parser<'a, (), E>
-where
-    E: 'a,
-{
-    move |_, state: State<'a>, min_indent: u32| {
-        if state.column() >= min_indent {
-            Ok((NoProgress, (), state))
-        } else {
-            Err((NoProgress, indent_problem(state.pos())))
-        }
-    }
 }
 
 pub fn simple_eat_whitespace(bytes: &[u8]) -> usize {
@@ -330,15 +327,15 @@ where
 {
     move |arena, state: State<'a>, min_indent: u32| {
         let start = state.pos();
-        match spaces().parse(arena, state, min_indent) {
-            Ok((progress, spaces, state)) => {
-                if progress == NoProgress || state.column() >= min_indent {
-                    Ok((progress, spaces, state))
-                } else {
-                    Err((progress, indent_problem(start)))
-                }
-            }
-            Err((progress, err)) => Err((progress, err)),
+
+        let mut newlines = Vec::new_in(arena);
+
+        let (progress, state) = consume_spaces(state, |_, space, _| newlines.push(space))?;
+
+        if progress == NoProgress || state.column() >= min_indent {
+            Ok((progress, newlines.into_bump_slice(), state))
+        } else {
+            Err((MadeProgress, indent_problem(start)))
         }
     }
 }
@@ -356,7 +353,7 @@ where
 
         match consume_spaces(state, |_, space, _| newlines.push(space)) {
             Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
+            Err(err) => Err(err),
         }
     }
 }
@@ -372,7 +369,7 @@ where
             newlines.push(Loc::at(Region::between(start, end), space))
         }) {
             Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
+            Err(err) => Err(err),
         }
     }
 }

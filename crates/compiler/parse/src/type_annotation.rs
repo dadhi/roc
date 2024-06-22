@@ -592,7 +592,7 @@ fn expression<'a>(
             .trace("type_annotation:expression:rest_args"),
             skip_second!(
                 space0_e(EType::TIndentStart),
-                two_bytes(b'-', b'>', EType::TStart)
+                two_bytes(b"->", EType::TStart)
             )
             .trace("type_annotation:expression:arrow")
         ]

@@ -202,21 +202,14 @@ pub fn parse_ident<'a>(
                         }
                     }
                 }
-
-                return Ok((MadeProgress, Ident::Access { module_name, parts }, state));
             }
-
             Ok((MadeProgress, ident, state))
         }
         Err((0, _)) => Err((NoProgress, EExpr::Start(state.pos()))),
-        Err((width, fail)) => match fail {
+        Err((width, err)) => match err {
             BadIdent::Start(pos) => Err((NoProgress, EExpr::Start(pos))),
             BadIdent::Space(e, pos) => Err((NoProgress, EExpr::Space(e, pos))),
-            _ => malformed_identifier(
-                initial.bytes(),
-                fail,
-                advance_state!(state, width as usize)?,
-            ),
+            _ => malformed_identifier(initial.bytes(), err, advance_state!(state, width as usize)?),
         },
     }
 }

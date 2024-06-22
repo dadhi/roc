@@ -4821,6 +4821,42 @@ mod test_fmt {
         ));
     }
 
+    #[test]
+    fn func_call_trailing_lambda_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \x -> x |> Num.add 1
+
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                \x42 -> x42 |> Num.add 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_with_pipe_sugar() {
+        expr_formats_to(
+            indoc!(
+                r"
+                \> Num.add 1
+            "
+            ),
+            indoc!(
+                r"
+                \x42 -> x42 |> Num.add 1
+            "
+            ),
+        );
+    }
+
     // MODULES
 
     #[test]

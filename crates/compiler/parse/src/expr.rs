@@ -167,45 +167,6 @@ fn record_field_access_chain<'a>() -> impl Parser<'a, Vec<'a, Suffix<'a>>, EExpr
     ))
 }
 
-fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    move |arena, state: State<'a>, min_indent| {
-        let start = state.pos();
-        match loc_expr_in_parens_etc_help().parse(arena, state.clone(), min_indent) {
-            Ok(ok) => return Ok(ok),
-            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => {}
-        };
-        match string_like_literal_help().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Str(err, start))),
-            Err(_) => {}
-        };
-        match positive_number_literal_help().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
-            Err(_) => {}
-        };
-        match closure_help(options).parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
-            Err(_) => {}
-        };
-        match record_literal_help().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => {}
-        };
-        match list_literal_help().parse(arena, state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::List(err, start))),
-            Err(_) => {}
-        };
-        parse_ident_seq
-            .trace("ident_seq")
-            .parse(arena, state, min_indent)
-    }
-}
-
 fn parse_ident_seq<'a>(
     arena: &'a Bump,
     state: State<'a>,
@@ -245,7 +206,46 @@ fn underscore_expression<'a>() -> impl Parser<'a, Expr<'a>, EExpr<'a>> {
     }
 }
 
-fn loc_possibly_negative_or_negated_term<'a>(
+fn loc_term<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match loc_expr_in_parens_etc_help().parse(arena, state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match string_like_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Str(err, start))),
+            Err(_) => {}
+        };
+        match positive_number_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
+            Err(_) => {}
+        };
+        match closure_help(options).parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err(_) => {}
+        };
+        match record_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, err)),
+            Err(_) => {}
+        };
+        match list_literal_help().parse(arena, state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::List(err, start))),
+            Err(_) => {}
+        };
+        parse_ident_seq
+            .trace("ident_seq")
+            .parse(arena, state, min_indent)
+    }
+}
+
+fn loc_possibly_negated_term<'a>(
     options: ExprParseOptions,
 ) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
@@ -255,24 +255,9 @@ fn loc_possibly_negative_or_negated_term<'a>(
 
         let start_state = state.clone();
         let start = state.pos();
-        match positive_number_literal_help().parse(arena, start_state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
-            Err(_) => {}
-        };
         match loc_expr_in_parens_etc_help().parse(arena, start_state.clone(), min_indent) {
             Ok(ok) => return Ok(ok),
             Err((MadeProgress, err)) => return Err((MadeProgress, err)),
-            Err(_) => {}
-        };
-        match if_expr_help(options).parse(arena, start_state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::If(err, start))),
-            Err(_) => {}
-        };
-        match when::expr_help(options).parse(arena, start_state.clone(), min_indent) {
-            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::When(err, start))),
             Err(_) => {}
         };
         match string_like_literal_help().parse(arena, start_state.clone(), min_indent) {
@@ -280,9 +265,9 @@ fn loc_possibly_negative_or_negated_term<'a>(
             Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Str(err, start))),
             Err(_) => {}
         };
-        match closure_help(options).parse(arena, start_state.clone(), min_indent) {
+        match positive_number_literal_help().parse(arena, start_state.clone(), min_indent) {
             Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
-            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Number(err, start))),
             Err(_) => {}
         };
         match underscore_expression().parse(arena, start_state.clone(), min_indent) {
@@ -306,6 +291,34 @@ fn loc_possibly_negative_or_negated_term<'a>(
             Err(_) => {}
         };
         parse_ident_seq
+            .trace("ident_seq")
+            .parse(arena, start_state, min_indent)
+    }
+}
+
+fn loc_possibly_negated_term_or_if_when_closure<'a>(
+    options: ExprParseOptions,
+) -> impl Parser<'a, Loc<Expr<'a>>, EExpr<'a>> {
+    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
+        let start_state = state.clone();
+        let start = state.pos();
+
+        match if_expr_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::If(err, start))),
+            Err(_) => {}
+        };
+        match when::expr_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::When(err, start))),
+            Err(_) => {}
+        };
+        match closure_help(options).parse(arena, start_state.clone(), min_indent) {
+            Ok((p, expr, state)) => return Ok((p, Loc::of(start, state.pos(), expr), state)),
+            Err((MadeProgress, err)) => return Err((MadeProgress, EExpr::Closure(err, start))),
+            Err(_) => {}
+        };
+        loc_possibly_negated_term(options)
             .trace("ident_seq")
             .parse(arena, start_state, min_indent)
     }
@@ -403,7 +416,7 @@ fn expr_start<'a>(options: ExprParseOptions) -> impl Parser<'a, Loc<Expr<'a>>, E
         }
 
         let (_, expr, state) =
-            match loc_possibly_negative_or_negated_term(options).parse(arena, state, min_indent) {
+            match loc_possibly_negated_term(options).parse(arena, state, min_indent) {
                 Err((NoProgress, _)) => Err((NoProgress, EExpr::Start(start))),
                 res => res,
             }?;
@@ -1867,8 +1880,6 @@ fn parse_expr_operator<'a>(
     let (_, spaces_after_operator, state) =
         space0_e(EExpr::IndentEnd).parse(arena, state, min_indent)?;
 
-    // a '-' is unary if it is preceded by a space and not followed by a space
-
     let op = loc_op.value;
     let op_at = loc_op.region;
     let op_start = op_at.start();
@@ -1876,6 +1887,8 @@ fn parse_expr_operator<'a>(
     let new_start = state.pos();
     match op {
         BinOp::Minus if expr_state.end != op_start && op_end == new_start => {
+            // a '-' is unary if it is preceded by a space and not followed by a space, otherwise it is binary
+
             let (_, negated_expr, state) = loc_term(options).parse(arena, state, min_indent)?;
             let new_end = state.pos();
 
@@ -2042,7 +2055,7 @@ fn parse_expr_operator<'a>(
                 _ => unreachable!(),
             },
         ),
-        _ => match loc_possibly_negative_or_negated_term(options).parse(
+        _ => match loc_possibly_negated_term_or_if_when_closure(options).parse(
             arena,
             state.clone(),
             min_indent,

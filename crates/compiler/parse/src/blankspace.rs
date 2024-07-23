@@ -327,15 +327,17 @@ where
 {
     move |arena, state: State<'a>, min_indent: u32| {
         let start = state.pos();
-
         let mut newlines = Vec::new_in(arena);
 
-        let (progress, state) = consume_spaces(state, |_, space, _| newlines.push(space))?;
-
-        if progress == NoProgress || state.column() >= min_indent {
-            Ok((progress, newlines.into_bump_slice(), state))
-        } else {
-            Err((MadeProgress, indent_problem(start)))
+        match consume_spaces(state, |_, space, _| newlines.push(space)) {
+            Ok((p, state)) => {
+                if p == NoProgress || state.column() >= min_indent {
+                    Ok((p, newlines.into_bump_slice(), state))
+                } else {
+                    Err((MadeProgress, indent_problem(start)))
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 }
@@ -374,7 +376,7 @@ where
     }
 }
 
-fn consume_spaces<'a, E, F>(
+pub(crate) fn consume_spaces<'a, E, F>(
     mut state: State<'a>,
     mut on_space: F,
 ) -> Result<(Progress, State<'a>), (Progress, E)>

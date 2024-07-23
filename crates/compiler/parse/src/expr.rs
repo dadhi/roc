@@ -2677,9 +2677,13 @@ fn closure_help<'a>(options: ExprParseOptions) -> impl Parser<'a, Expr<'a>, EClo
                 ident: &CLOSURE_PIPE_PARAM,
             };
             let loc_param = Loc::of(param_start, arrow_state.pos(), param);
+            let mut params = Vec::with_capacity_in(1, arena);
+            params.push(loc_param);
             dbg!("closure pipe param: ", loc_param);
 
-            todo!("TODO @wip closure pipe sugar")
+            // let res = Expr::Closure(params.into_bump_slice(), arena.alloc(loc_expr));
+            // return Ok((MadeProgress, res, arrow_state));
+            todo!("@wip")
         }
 
         let (_, (), state) = match state.bytes().first() {

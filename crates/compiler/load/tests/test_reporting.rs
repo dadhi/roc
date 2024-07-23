@@ -1665,7 +1665,7 @@ mod test_reporting {
             f 1
             "
         ),
-        @r#"
+        @r"
     ── TOO FEW ARGS in /code/proj/Main.roc ─────────────────────────────────────────
 
     The `f` function expects 2 arguments, but it got only 1:
@@ -1675,11 +1675,7 @@ mod test_reporting {
 
     Roc does not allow functions to be partially applied. Use a closure to
     make partial application explicit.
-
-    For example: ["a", "b"] |> \list -> Str.joinWith list ", "
-
-    or simplier: ["a", "b"] |> Str.joinWith ", "
-    "#
+    "
     );
 
     test_report!(
@@ -14239,7 +14235,7 @@ In roc, functions are always written as a lambda, like{}
             2 |> (Num.sub 3)
             "
         ),
-        @r#"
+        @r"
     ── TOO FEW ARGS in /code/proj/Main.roc ─────────────────────────────────────────
 
     The `sub` function expects 2 arguments, but it got only 1:
@@ -14249,11 +14245,7 @@ In roc, functions are always written as a lambda, like{}
 
     Roc does not allow functions to be partially applied. Use a closure to
     make partial application explicit.
-
-    For example: ["a", "b"] |> \list -> Str.joinWith list ", "
-
-    or simplier: ["a", "b"] |> Str.joinWith ", "
-    "#
+    "
     );
 
     test_report!(
@@ -14263,7 +14255,7 @@ In roc, functions are always written as a lambda, like{}
             2 |> (Num.sub 3) |> Num.sub 3
             "
         ),
-        @r#"
+        @r"
     ── TOO FEW ARGS in /code/proj/Main.roc ─────────────────────────────────────────
 
     The `sub` function expects 2 arguments, but it got only 1:
@@ -14273,10 +14265,6 @@ In roc, functions are always written as a lambda, like{}
 
     Roc does not allow functions to be partially applied. Use a closure to
     make partial application explicit.
-
-    For example: ["a", "b"] |> \list -> Str.joinWith list ", "
-
-    or simplier: ["a", "b"] |> Str.joinWith ", "
-    "#
+    "
     );
 }

@@ -4,8 +4,8 @@ use crate::ident::{lowercase_ident, parse_ident, Accessor, Ident};
 use crate::keyword;
 use crate::parser::{
     self, backtrackable, byte, collection_trailing_sep_e, fail_when, loc, map, map_with_arena,
-    optional, skip_first, specialize_err, specialize_err_ref, then, three_bytes, two_bytes,
-    zero_or_more, EPattern, PInParens, PList, PRecord, Parser,
+    optional, specialize_err, specialize_err_ref, then, three_bytes, two_bytes, zero_or_more,
+    EPattern, PInParens, PList, PRecord, Parser,
 };
 use crate::parser::{either, Progress::*};
 use crate::state::State;
@@ -28,20 +28,29 @@ pub enum PatternType {
 }
 
 pub fn closure_param<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
-    one_of!(
+    move |arena, state: State<'a>, min_indent| {
         // An ident is the most common param, e.g. \foo -> ...
-        loc_ident_pattern_help(true),
+        match loc_ident_pattern_help(true).parse(arena, state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
+            Err(_) => {}
+        }
         // Underscore is also common, e.g. \_ -> ...
-        loc(underscore_pattern_help()),
+        match loc_underscore_pattern_help().parse(arena, state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
+            Err(_) => {}
+        }
         // You can destructure records in params, e.g. \{ x, y } -> ...
-        loc(specialize_err(
-            EPattern::Record,
-            crate::pattern::record_pattern_help()
-        )),
+        match loc_record_pattern_help().parse(arena, state.clone(), min_indent) {
+            Ok(ok) => return Ok(ok),
+            Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
+            Err(_) => {}
+        }
         // If you wrap it in parens, you can match any arbitrary pattern at all.
         // e.g. \User.UserId userId -> ...
-        specialize_err(EPattern::PInParens, loc_pattern_in_parens_help())
-    )
+        loc_pattern_in_parens_help().parse(arena, state.clone(), min_indent)
+    }
 }
 
 pub fn loc_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
@@ -83,13 +92,10 @@ fn loc_pattern_help_help<'a>(
     can_have_arguments: bool,
 ) -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     one_of!(
-        specialize_err(EPattern::PInParens, loc_pattern_in_parens_help()),
-        loc(underscore_pattern_help()),
+        loc_pattern_in_parens_help(),
+        loc_underscore_pattern_help(),
         loc_ident_pattern_help(can_have_arguments),
-        loc(specialize_err(
-            EPattern::Record,
-            crate::pattern::record_pattern_help()
-        )),
+        loc_record_pattern_help(),
         loc(specialize_err(EPattern::List, list_pattern_help())),
         loc(number_pattern_help()),
         loc(string_like_pattern_help()),
@@ -194,35 +200,45 @@ pub fn loc_implements_parser<'a>() -> impl Parser<'a, Loc<Implements<'a>>, EPatt
     )
 }
 
-fn loc_pattern_in_parens_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, PInParens<'a>> {
-    then(
-        loc(collection_trailing_sep_e(
-            byte(b'(', PInParens::Open),
+fn loc_pattern_in_parens_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+    (move |arena, state: State<'a>, _min_indent| {
+        let patterns_parser = parser::collection_inner(
             specialize_err_ref(PInParens::Pattern, loc_pattern_help()),
             byte(b',', PInParens::End),
-            byte(b')', PInParens::End),
             Pattern::SpaceBefore,
-        )),
-        move |_arena, state, _, loc_elements| {
-            let elements = loc_elements.value;
-            let region = loc_elements.region;
+        );
 
-            if elements.len() > 1 {
-                Ok((
-                    MadeProgress,
-                    Loc::at(region, Pattern::Tuple(elements)),
-                    state,
-                ))
-            } else if elements.is_empty() {
-                Err((NoProgress, PInParens::Empty(state.pos())))
-            } else {
-                // TODO: don't discard comments before/after
-                // (stored in the Collection)
-                // TODO: add Pattern::ParensAround to faithfully represent the input
-                Ok((MadeProgress, elements.items[0], state))
+        let start = state.pos();
+        if state.bytes().first() != Some(&b'(') {
+            let fail = PInParens::Open(state.pos());
+            Err((NoProgress, EPattern::PInParens(fail, start)))
+        } else {
+            let state = state.advance(1);
+            match patterns_parser.parse(arena, state, 0) {
+                Ok((_, pats, state)) => {
+                    if state.bytes().first() != Some(&b')') {
+                        let fail = PInParens::End(state.pos());
+                        Err((MadeProgress, EPattern::PInParens(fail, start)))
+                    } else {
+                        let state = state.advance(1);
+                        if pats.len() > 1 {
+                            let pats = Loc::pos(start, state.pos(), Pattern::Tuple(pats));
+                            Ok((MadeProgress, pats, state))
+                        } else if pats.is_empty() {
+                            let fail = PInParens::Empty(state.pos());
+                            Err((NoProgress, EPattern::PInParens(fail, start)))
+                        } else {
+                            // TODO: don't discard comments before/after
+                            // (stored in the Collection)
+                            // TODO: add Pattern::ParensAround to faithfully represent the input
+                            Ok((MadeProgress, pats.items[0], state))
+                        }
+                    }
+                }
+                Err((_, fail)) => Err((MadeProgress, EPattern::PInParens(fail, start))),
             }
-        },
-    )
+        }
+    })
     .trace("pat_in_parens")
 }
 
@@ -451,26 +467,40 @@ fn loc_ident_pattern_help<'a>(
     }
 }
 
-fn underscore_pattern_help<'a>() -> impl Parser<'a, Pattern<'a>, EPattern<'a>> {
-    map(
-        skip_first(
-            byte(b'_', EPattern::Underscore),
-            optional(lowercase_ident_pattern()),
-        ),
-        |output| match output {
-            Some(name) => Pattern::Underscore(name),
-            None => Pattern::Underscore(""),
-        },
-    )
+fn loc_underscore_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        if state.bytes().first() == Some(&b'_') {
+            let state = state.advance(1);
+            let before_ident = state.clone();
+            match lowercase_ident().parse(arena, state, min_indent) {
+                Ok((_, name, state)) => {
+                    let ident = Loc::pos(start, state.pos(), Pattern::Underscore(name));
+                    Ok((MadeProgress, ident, state))
+                }
+                Err((NoProgress, _)) => {
+                    let ident = Loc::pos(start, before_ident.pos(), Pattern::Underscore(""));
+                    Ok((MadeProgress, ident, before_ident))
+                }
+                Err(_) => Err((MadeProgress, EPattern::End(before_ident.pos()))),
+            }
+        } else {
+            Err((NoProgress, EPattern::Underscore(state.pos())))
+        }
+    }
 }
 
-fn lowercase_ident_pattern<'a>() -> impl Parser<'a, &'a str, EPattern<'a>> {
-    specialize_err(move |_, pos| EPattern::End(pos), lowercase_ident())
-}
-
-#[inline(always)]
-fn record_pattern_help<'a>() -> impl Parser<'a, Pattern<'a>, PRecord<'a>> {
-    map(record_pattern_fields(), Pattern::RecordDestructure)
+fn loc_record_pattern_help<'a>() -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+    move |arena, state: State<'a>, min_indent| {
+        let start = state.pos();
+        match record_pattern_fields().parse(arena, state, min_indent) {
+            Ok((p, pats, state)) => {
+                let pat = Loc::pos(start, state.pos(), Pattern::RecordDestructure(pats));
+                Ok((p, pat, state))
+            }
+            Err((p, fail)) => Err((p, EPattern::Record(fail, start))),
+        }
+    }
 }
 
 pub fn record_pattern_fields<'a>() -> impl Parser<'a, Collection<'a, Loc<Pattern<'a>>>, PRecord<'a>>

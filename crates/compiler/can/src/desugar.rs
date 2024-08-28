@@ -5,6 +5,7 @@ use bumpalo::collections::Vec;
 use bumpalo::Bump;
 use roc_error_macros::internal_error;
 use roc_module::called_via::BinOp::Pizza;
+use roc_module::called_via::BinOp::SlashPizza;
 use roc_module::called_via::{BinOp, CalledVia};
 use roc_module::ident::ModuleName;
 use roc_parse::ast::Expr::{self, *};
@@ -30,7 +31,7 @@ fn new_op_call_expr<'a>(
     let region = Region::span_across(&left.region, &right.region);
 
     let value = match loc_op.value {
-        Pizza => {
+        Pizza | SlashPizza => {
             // Rewrite the Pizza operator into an Apply
 
             match &right.value {
@@ -1643,6 +1644,7 @@ fn binop_to_function(binop: BinOp) -> (&'static str, &'static str) {
         And => (ModuleName::BOOL, "and"),
         Or => (ModuleName::BOOL, "or"),
         Pizza => unreachable!("Cannot desugar the |> operator"),
+        SlashPizza => unreachable!("Cannot desugar the \\> operator"),
     }
 }
 

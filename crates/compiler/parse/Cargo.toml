@@ -28,7 +28,12 @@ proptest.workspace = true
 quickcheck.workspace = true
 quickcheck_macros.workspace = true
 tempfile.workspace = true
+rand.workspace = true
 
 [[bench]]
 harness = false
 name = "bench_parse"
+
+[[bench]]
+harness = false
+name = "bench_keyword_lookup"

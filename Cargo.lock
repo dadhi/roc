@@ -2928,6 +2928,7 @@ dependencies = [
  "proptest",
  "quickcheck",
  "quickcheck_macros",
+ "rand",
  "roc_collections",
  "roc_error_macros",
  "roc_module",

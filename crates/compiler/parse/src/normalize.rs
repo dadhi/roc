@@ -692,10 +692,12 @@ impl<'a> Normalize<'a> for Expr<'a> {
                 is_negative,
             },
             Expr::Str(a) => Expr::Str(a.normalize(arena)),
-            Expr::RecordAccess(a, b) => Expr::RecordAccess(arena.alloc(a.normalize(arena)), b),
+            Expr::RecordAccess(a, b, s) => {
+                Expr::RecordAccess(arena.alloc(a.normalize(arena)), b, s)
+            }
             Expr::AccessorFunction(a) => Expr::AccessorFunction(a),
             Expr::RecordUpdater(a) => Expr::RecordUpdater(a),
-            Expr::TupleAccess(a, b) => Expr::TupleAccess(arena.alloc(a.normalize(arena)), b),
+            Expr::TupleAccess(a, b, s) => Expr::TupleAccess(arena.alloc(a.normalize(arena)), b, s),
             Expr::TrySuffix { expr: a, target } => Expr::TrySuffix {
                 expr: arena.alloc(a.normalize(arena)),
                 target,
@@ -711,13 +713,14 @@ impl<'a> Normalize<'a> for Expr<'a> {
                 fields: fields.normalize(arena),
             },
             Expr::Tuple(a) => Expr::Tuple(a.normalize(arena)),
-            Expr::Var { module_name, ident } => Expr::Var { module_name, ident },
+            v @ Expr::Var { .. } => v,
             Expr::Underscore(a) => Expr::Underscore(a),
             Expr::Tag(a) => Expr::Tag(a),
             Expr::OpaqueRef(a) => Expr::OpaqueRef(a),
-            Expr::Closure(a, b) => Expr::Closure(
-                arena.alloc(a.normalize(arena)),
+            Expr::Closure(p, b, s) => Expr::Closure(
+                arena.alloc(p.normalize(arena)),
                 arena.alloc(b.normalize(arena)),
+                s,
             ),
             Expr::Crash => Expr::Crash,
             Expr::Defs(a, b) => {
@@ -996,8 +999,6 @@ impl<'a> Normalize<'a> for EExpr<'a> {
             EExpr::Space(inner_err, _pos) => EExpr::Space(*inner_err, Position::zero()),
             EExpr::Dot(_pos) => EExpr::Dot(Position::zero()),
             EExpr::Access(_pos) => EExpr::Access(Position::zero()),
-            EExpr::UnaryNot(_pos) => EExpr::UnaryNot(Position::zero()),
-            EExpr::UnaryNegate(_pos) => EExpr::UnaryNegate(Position::zero()),
             EExpr::BadOperator(inner_err, _pos) => {
                 EExpr::BadOperator(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1045,8 +1046,6 @@ impl<'a> Normalize<'a> for EExpr<'a> {
             EExpr::Closure(inner_err, _pos) => {
                 EExpr::Closure(inner_err.normalize(arena), Position::zero())
             }
-            EExpr::Underscore(_pos) => EExpr::Underscore(Position::zero()),
-            EExpr::Crash(_pos) => EExpr::Crash(Position::zero()),
             EExpr::InParens(inner_err, _pos) => {
                 EExpr::InParens(inner_err.normalize(arena), Position::zero())
             }
@@ -1123,7 +1122,6 @@ impl<'a> Normalize<'a> for EClosure<'a> {
             EClosure::Space(inner_err, _) => EClosure::Space(*inner_err, Position::zero()),
             EClosure::Start(_) => EClosure::Start(Position::zero()),
             EClosure::Arrow(_) => EClosure::Arrow(Position::zero()),
-            EClosure::Comma(_) => EClosure::Comma(Position::zero()),
             EClosure::Arg(_) => EClosure::Arg(Position::zero()),
             EClosure::Pattern(inner_err, _) => {
                 EClosure::Pattern(inner_err.normalize(arena), Position::zero())
@@ -1160,14 +1158,10 @@ impl<'a> Normalize<'a> for ERecord<'a> {
             ERecord::Field(_pos) => ERecord::Field(Position::zero()),
             ERecord::UnderscoreField(_pos) => ERecord::Field(Position::zero()),
             ERecord::Colon(_) => ERecord::Colon(Position::zero()),
-            ERecord::QuestionMark(_) => ERecord::QuestionMark(Position::zero()),
-            ERecord::Arrow(_) => ERecord::Arrow(Position::zero()),
-            ERecord::Ampersand(_) => ERecord::Ampersand(Position::zero()),
             ERecord::Expr(inner_err, _) => {
                 ERecord::Expr(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
             ERecord::Space(inner_err, _) => ERecord::Space(*inner_err, Position::zero()),
-            ERecord::Prefix(_) => ERecord::Prefix(Position::zero()),
         }
     }
 }
@@ -1261,16 +1255,10 @@ impl<'a> Normalize<'a> for EType<'a> {
                 EType::TInlineAlias(inner_err.normalize(arena), Position::zero())
             }
             EType::TBadTypeVariable(_) => EType::TBadTypeVariable(Position::zero()),
-            EType::TWildcard(_) => EType::TWildcard(Position::zero()),
-            EType::TInferred(_) => EType::TInferred(Position::zero()),
             EType::TStart(_) => EType::TStart(Position::zero()),
             EType::TEnd(_) => EType::TEnd(Position::zero()),
             EType::TFunctionArgument(_) => EType::TFunctionArgument(Position::zero()),
-            EType::TWhereBar(_) => EType::TWhereBar(Position::zero()),
             EType::TImplementsClause(_) => EType::TImplementsClause(Position::zero()),
-            EType::TAbilityImpl(inner_err, _) => {
-                EType::TAbilityImpl(inner_err.normalize(arena), Position::zero())
-            }
             EType::TIndentStart(_) => EType::TIndentStart(Position::zero()),
             EType::TIndentEnd(_) => EType::TIndentEnd(Position::zero()),
             EType::TAsIndentStart(_) => EType::TAsIndentStart(Position::zero()),
@@ -1323,8 +1311,6 @@ impl<'a> Normalize<'a> for ETypeAbilityImpl<'a> {
                 ETypeAbilityImpl::UnderscoreField(Position::zero())
             }
             ETypeAbilityImpl::Colon(_) => ETypeAbilityImpl::Colon(Position::zero()),
-            ETypeAbilityImpl::Arrow(_) => ETypeAbilityImpl::Arrow(Position::zero()),
-            ETypeAbilityImpl::Optional(_) => ETypeAbilityImpl::Optional(Position::zero()),
             ETypeAbilityImpl::Type(inner_err, _) => {
                 ETypeAbilityImpl::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1332,7 +1318,6 @@ impl<'a> Normalize<'a> for ETypeAbilityImpl<'a> {
                 ETypeAbilityImpl::Space(*inner_err, Position::zero())
             }
             ETypeAbilityImpl::QuestionMark(_) => ETypeAbilityImpl::QuestionMark(Position::zero()),
-            ETypeAbilityImpl::Ampersand(_) => ETypeAbilityImpl::Ampersand(Position::zero()),
             ETypeAbilityImpl::Expr(inner_err, _) => {
                 ETypeAbilityImpl::Expr(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1340,7 +1325,6 @@ impl<'a> Normalize<'a> for ETypeAbilityImpl<'a> {
             ETypeAbilityImpl::IndentAmpersand(_) => {
                 ETypeAbilityImpl::IndentAmpersand(Position::zero())
             }
-            ETypeAbilityImpl::Prefix(_) => ETypeAbilityImpl::Prefix(Position::zero()),
         }
     }
 }
@@ -1375,7 +1359,6 @@ impl<'a> Normalize<'a> for ETypeInParens<'a> {
         match self {
             ETypeInParens::Empty(_) => ETypeInParens::Empty(Position::zero()),
             ETypeInParens::End(_) => ETypeInParens::End(Position::zero()),
-            ETypeInParens::Open(_) => ETypeInParens::Open(Position::zero()),
             ETypeInParens::Type(inner_err, _) => {
                 ETypeInParens::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1392,7 +1375,6 @@ impl<'a> Normalize<'a> for ETypeTagUnion<'a> {
     fn normalize(&self, arena: &'a Bump) -> Self {
         match self {
             ETypeTagUnion::End(_) => ETypeTagUnion::End(Position::zero()),
-            ETypeTagUnion::Open(_) => ETypeTagUnion::Open(Position::zero()),
             ETypeTagUnion::Type(inner_err, _) => {
                 ETypeTagUnion::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1407,10 +1389,7 @@ impl<'a> Normalize<'a> for ETypeRecord<'a> {
     fn normalize(&self, arena: &'a Bump) -> Self {
         match self {
             ETypeRecord::End(_) => ETypeRecord::End(Position::zero()),
-            ETypeRecord::Open(_) => ETypeRecord::Open(Position::zero()),
             ETypeRecord::Field(_) => ETypeRecord::Field(Position::zero()),
-            ETypeRecord::Colon(_) => ETypeRecord::Colon(Position::zero()),
-            ETypeRecord::Optional(_) => ETypeRecord::Optional(Position::zero()),
             ETypeRecord::Type(inner_err, _) => {
                 ETypeRecord::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1429,8 +1408,6 @@ impl<'a> Normalize<'a> for PRecord<'a> {
             PRecord::End(_) => PRecord::End(Position::zero()),
             PRecord::Open(_) => PRecord::Open(Position::zero()),
             PRecord::Field(_) => PRecord::Field(Position::zero()),
-            PRecord::Colon(_) => PRecord::Colon(Position::zero()),
-            PRecord::Optional(_) => PRecord::Optional(Position::zero()),
             PRecord::Pattern(inner_err, _) => {
                 PRecord::Pattern(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1460,8 +1437,6 @@ impl<'a> Normalize<'a> for EExpect<'a> {
     fn normalize(&self, arena: &'a Bump) -> Self {
         match self {
             EExpect::Space(inner_err, _) => EExpect::Space(*inner_err, Position::zero()),
-            EExpect::Dbg(_) => EExpect::Dbg(Position::zero()),
-            EExpect::Expect(_) => EExpect::Expect(Position::zero()),
             EExpect::Condition(inner_err, _) => {
                 EExpect::Condition(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1508,8 +1483,6 @@ impl<'a> Normalize<'a> for EWhen<'a> {
                 EWhen::Pattern(inner_err.normalize(arena), Position::zero())
             }
             EWhen::Arrow(_) => EWhen::Arrow(Position::zero()),
-            EWhen::Bar(_) => EWhen::Bar(Position::zero()),
-            EWhen::IfToken(_) => EWhen::IfToken(Position::zero()),
             EWhen::IfGuard(inner_err, _) => {
                 EWhen::IfGuard(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }

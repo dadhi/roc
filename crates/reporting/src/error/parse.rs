@@ -767,54 +767,6 @@ fn to_lambda_report<'a>(
                 }
             }
         },
-
-        EClosure::Comma(pos) => match what_is_next(alloc.src_lines, lines.convert_pos(pos)) {
-            Next::Token("=>") => {
-                let surroundings = Region::new(start, pos);
-                let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                let doc = alloc.stack([
-                    alloc
-                        .reflow(r"I am partway through parsing a function argument list, but I got stuck here:"),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.concat([
-                        alloc.reflow("I was expecting a "),
-                        alloc.parser_suggestion("->"),
-                        alloc.reflow(" next."),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "WEIRD ARROW".to_string(),
-                    severity,
-                }
-            }
-            _ => {
-                let surroundings = Region::new(start, pos);
-                let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                let doc = alloc.stack([
-                    alloc
-                        .reflow(r"I am partway through parsing a function argument list, but I got stuck here:"),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.concat([
-                        alloc.reflow("I was expecting a "),
-                        alloc.parser_suggestion("->"),
-                        alloc.reflow(" next."),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "MISSING ARROW".to_string(),
-                    severity,
-                }
-            }
-        },
-
         EClosure::Arg(pos) => match what_is_next(alloc.src_lines, lines.convert_pos(pos)) {
             Next::Other(Some(',')) => {
                 let surroundings = Region::new(start, pos);
@@ -1434,13 +1386,11 @@ fn to_dbg_or_expect_report<'a>(
             to_space_report(alloc, lines, filename, err, *pos)
         }
 
-        roc_parse::parser::EExpect::Dbg(_) => unreachable!("another branch would be taken"),
-        roc_parse::parser::EExpect::Expect(_) => unreachable!("another branch would be taken"),
-
         roc_parse::parser::EExpect::Condition(e_expr, condition_start) => {
             // is adding context helpful here?
             to_expr_report(alloc, lines, filename, context, e_expr, *condition_start)
         }
+
         roc_parse::parser::EExpect::Continuation(e_expr, continuation_start) => {
             let context = Context::InNode(node, start);
             to_expr_report(alloc, lines, filename, context, e_expr, *continuation_start)
@@ -1904,20 +1854,6 @@ fn to_when_report<'a>(
             pos,
         ),
 
-        EWhen::Bar(pos) => to_unfinished_when_report(
-            alloc,
-            lines,
-            filename,
-            pos,
-            start,
-            alloc.concat([
-                alloc.reflow(r"I just saw a "),
-                alloc.parser_suggestion(r"|"),
-                alloc.reflow(r" so I was expecting to see a pattern next."),
-            ]),
-        ),
-
-        EWhen::IfToken(_pos) => unreachable!("the if-token is optional"),
         EWhen::When(_pos) => unreachable!("another branch would be taken"),
 
         EWhen::Is(pos) => to_unfinished_when_report(
@@ -2321,13 +2257,6 @@ fn to_precord_report<'a>(
             }
         },
 
-        PRecord::Colon(_) => {
-            unreachable!("because `foo` is a valid field; the colon is not required")
-        }
-        PRecord::Optional(_) => {
-            unreachable!("because `foo` is a valid field; the question mark is not required")
-        }
-
         PRecord::Pattern(pattern, pos) => to_pattern_report(alloc, lines, filename, pattern, pos),
 
         PRecord::Expr(expr, pos) => to_expr_report(
@@ -2689,55 +2618,6 @@ fn to_trecord_report<'a>(
     let severity = Severity::RuntimeError;
 
     match *parse_problem {
-        ETypeRecord::Open(pos) => match what_is_next(alloc.src_lines, lines.convert_pos(pos)) {
-            Next::Keyword(keyword) => {
-                let surroundings = Region::new(start, pos);
-                let region = to_keyword_region(lines.convert_pos(pos), keyword);
-
-                let doc = alloc.stack([
-                    alloc.reflow(r"I just started parsing a record type, but I got stuck on this field name:"),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.concat([
-                        alloc.reflow(r"Looks like you are trying to use "),
-                        alloc.keyword(keyword),
-                        alloc.reflow(" as a field name, but that is a reserved word. Try using a different name!"),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "UNFINISHED RECORD TYPE".to_string(),
-                    severity,
-                }
-            }
-            _ => {
-                let surroundings = Region::new(start, pos);
-                let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                let doc = alloc.stack([
-                    alloc.reflow(r"I just started parsing a record type, but I got stuck here:"),
-                    alloc.region_with_subregion(
-                        lines.convert_region(surroundings),
-                        region,
-                        severity,
-                    ),
-                    alloc.concat([
-                        alloc.reflow(r"Record types look like "),
-                        alloc.parser_suggestion("{ name : String, age : Int },"),
-                        alloc.reflow(" so I was expecting to see a field name next."),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "UNFINISHED RECORD TYPE".to_string(),
-                    severity,
-                }
-            }
-        },
-
         ETypeRecord::End(pos) => {
             let surroundings = Region::new(start, pos);
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
@@ -2832,13 +2712,6 @@ fn to_trecord_report<'a>(
                 }
             }
         },
-
-        ETypeRecord::Colon(_) => {
-            unreachable!("because `foo` is a valid field; the colon is not required")
-        }
-        ETypeRecord::Optional(_) => {
-            unreachable!("because `foo` is a valid field; the question mark is not required")
-        }
 
         ETypeRecord::Type(tipe, pos) => to_type_report(alloc, lines, filename, tipe, pos),
 
@@ -2944,81 +2817,6 @@ fn to_ttag_union_report<'a>(
     let severity = Severity::RuntimeError;
 
     match *parse_problem {
-        ETypeTagUnion::Open(pos) => match what_is_next(alloc.src_lines, lines.convert_pos(pos)) {
-            Next::Keyword(keyword) => {
-                let surroundings = Region::new(start, pos);
-                let region = to_keyword_region(lines.convert_pos(pos), keyword);
-
-                let doc = alloc.stack([
-                    alloc.reflow(r"I just started parsing a tag union, but I got stuck on this field name:"),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.concat([
-                        alloc.reflow(r"Looks like you are trying to use "),
-                        alloc.keyword(keyword),
-                        alloc.reflow(" as a tag name, but that is a reserved word. Tag names must start with a uppercase letter."),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "UNFINISHED TAG UNION TYPE".to_string(),
-                    severity,
-                }
-            }
-            Next::Other(Some(c)) if c.is_alphabetic() => {
-                debug_assert!(c.is_lowercase());
-
-                let surroundings = Region::new(start, pos);
-                let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                let doc = alloc.stack([
-                    alloc.reflow(
-                        r"I am partway through parsing a tag union type, but I got stuck here:",
-                    ),
-                    alloc.region_with_subregion(
-                        lines.convert_region(surroundings),
-                        region,
-                        severity,
-                    ),
-                    alloc.reflow(r"I was expecting to see a tag name."),
-                    hint_for_tag_name(alloc),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "WEIRD TAG NAME".to_string(),
-                    severity,
-                }
-            }
-            _ => {
-                let surroundings = Region::new(start, pos);
-                let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                let doc = alloc.stack([
-                    alloc.reflow(r"I just started parsing a tag union type, but I got stuck here:"),
-                    alloc.region_with_subregion(
-                        lines.convert_region(surroundings),
-                        region,
-                        severity,
-                    ),
-                    alloc.concat([
-                        alloc.reflow(r"Tag unions look like "),
-                        alloc.parser_suggestion("[Many I64, None],"),
-                        alloc.reflow(" so I was expecting to see a tag name next."),
-                    ]),
-                ]);
-
-                Report {
-                    filename,
-                    doc,
-                    title: "UNFINISHED TAG UNION TYPE".to_string(),
-                    severity,
-                }
-            }
-        },
-
         ETypeTagUnion::End(pos) => {
             let surroundings = Region::new(start, pos);
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
@@ -3088,82 +2886,6 @@ fn to_tinparens_report<'a>(
     let severity = Severity::RuntimeError;
 
     match *parse_problem {
-        ETypeInParens::Open(pos) => {
-            match what_is_next(alloc.src_lines, lines.convert_pos(pos)) {
-                Next::Keyword(keyword) => {
-                    let surroundings = Region::new(start, pos);
-                    let region = to_keyword_region(lines.convert_pos(pos), keyword);
-
-                    let doc = alloc.stack([
-                    alloc.reflow(r"I just saw an open parenthesis, so I was expecting to see a type next."),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.concat([
-                        alloc.reflow(r"Something like "),
-                        alloc.parser_suggestion("(List Person)"),
-                        alloc.text(" or "),
-                        alloc.parser_suggestion("(Result I64 Str)"),
-                    ]),
-                ]);
-
-                    Report {
-                        filename,
-                        doc,
-                        title: "UNFINISHED PARENTHESES".to_string(),
-                        severity,
-                    }
-                }
-                Next::Other(Some(c)) if c.is_alphabetic() => {
-                    debug_assert!(c.is_lowercase());
-
-                    let surroundings = Region::new(start, pos);
-                    let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                    let doc = alloc.stack([
-                    alloc.reflow(
-                        r"I am partway through parsing a type in parentheses, but I got stuck here:",
-                    ),
-                    alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                    alloc.reflow(r"I was expecting to see a tag name."),
-                    hint_for_tag_name(alloc),
-                ]);
-
-                    Report {
-                        filename,
-                        doc,
-                        title: "WEIRD TAG NAME".to_string(),
-                        severity,
-                    }
-                }
-                _ => {
-                    let surroundings = Region::new(start, pos);
-                    let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                    let doc = alloc.stack([
-                        alloc.reflow(
-                            r"I just started parsing a type in parentheses, but I got stuck here:",
-                        ),
-                        alloc.region_with_subregion(
-                            lines.convert_region(surroundings),
-                            region,
-                            severity,
-                        ),
-                        alloc.concat([
-                            alloc.reflow(r"Tag unions look like "),
-                            alloc.parser_suggestion("[Many I64, None],"),
-                            alloc.reflow(" so I was expecting to see a tag name next."),
-                        ]),
-                    ]);
-
-                    Report {
-                        filename,
-                        doc,
-                        title: "UNFINISHED PARENTHESES".to_string(),
-                        severity,
-                    }
-                }
-            }
-        }
-
         ETypeInParens::Empty(pos) => {
             let surroundings = Region::new(start, pos);
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));

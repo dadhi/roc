@@ -4,45 +4,39 @@ use crate::ast::{
     Collection, CommentOrNewline, Defs, Header, Malformed, Pattern, Spaced, Spaces, SpacesBefore,
     StrLiteral, TypeAnnotation,
 };
-use crate::blankspace::{space0_before_e, space0_e};
+use crate::blankspace::{eat_space_check, space0_e, SpacedBuilder};
 use crate::expr::merge_spaces;
-use crate::ident::{self, lowercase_ident, unqualified_ident, UppercaseIdent};
+use crate::ident::{
+    self, lowercase_ident, parse_lowercase_ident, unqualified_ident, UppercaseIdent,
+};
 use crate::parser::Progress::{self, *};
 use crate::parser::{
-    and, backtrackable, byte, collection_trailing_sep_e, increment_min_indent, loc, map,
-    map_with_arena, optional, reset_min_indent, skip_first, skip_second, specialize_err, succeed,
-    then, two_bytes, zero_or_more, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
+    and, backtrackable, byte, collection_inner, collection_trailing_sep_e, increment_min_indent,
+    loc, map, map_with_arena, optional, reset_min_indent, skip_first, skip_second, specialize_err,
+    succeed, two_bytes, zero_or_more, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
     EPackages, EParams, EProvides, ERequires, ETypedIdent, Parser, SourceError, SpaceProblem,
     SyntaxError,
 };
-use crate::pattern::record_pattern_fields;
+use crate::pattern::parse_record_pattern_fields;
 use crate::state::State;
 use crate::string_literal::{self, parse_str_literal};
-use crate::type_annotation;
+use crate::type_annotation::{type_expr, SKIP_PARSING_SPACES_BEFORE, TRAILING_COMMA_VALID};
 use roc_module::symbol::ModuleId;
 use roc_region::all::{Loc, Position, Region};
-
-fn end_of_file<'a>() -> impl Parser<'a, (), SyntaxError<'a>> {
-    |_arena, state: State<'a>, _min_indent: u32| {
-        if state.has_reached_end() {
-            Ok((NoProgress, (), state))
-        } else {
-            Err((NoProgress, SyntaxError::NotEndOfFile(state.pos())))
-        }
-    }
-}
 
 pub fn parse_module_defs<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     defs: Defs<'a>,
 ) -> Result<Defs<'a>, SyntaxError<'a>> {
-    let min_indent = 0;
     match crate::expr::parse_top_level_defs(arena, state.clone(), defs) {
-        Ok((_, defs, state)) => match end_of_file().parse(arena, state, min_indent) {
-            Ok(_) => Ok(defs),
-            Err((_, fail)) => Err(fail),
-        },
+        Ok((_, defs, state)) => {
+            if state.has_reached_end() {
+                Ok(defs)
+            } else {
+                Err(SyntaxError::NotEndOfFile(state.pos()))
+            }
+        }
         Err((_, fail)) => Err(SyntaxError::Expr(fail, state.pos())),
     }
 }
@@ -122,14 +116,34 @@ fn module_header<'a>() -> impl Parser<'a, ModuleHeader<'a>, EHeader<'a>> {
 }
 
 fn module_params<'a>() -> impl Parser<'a, ModuleParams<'a>, EParams<'a>> {
-    record!(ModuleParams {
-        pattern: specialize_err(EParams::Pattern, loc(record_pattern_fields())),
-        before_arrow: skip_second(
-            space0_e(EParams::BeforeArrow),
-            loc(two_bytes(b'-', b'>', EParams::Arrow))
-        ),
-        after_arrow: space0_e(EParams::AfterArrow),
-    })
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        let start = state.pos();
+
+        let (pattern, state) = match parse_record_pattern_fields(arena, state) {
+            Ok((_, fields, state)) => (Loc::pos(start, state.pos(), fields), state),
+            Err((p, fail)) => {
+                return Err((p, EParams::Pattern(fail, start)));
+            }
+        };
+
+        let (_, before_arrow, state) =
+            eat_space_check(EParams::BeforeArrow, arena, state, min_indent, false)?;
+
+        if !state.bytes().starts_with(b"->") {
+            return Err((MadeProgress, EParams::Arrow(state.pos())));
+        }
+        let state = state.advance(2);
+
+        let (_, after_arrow, state) =
+            eat_space_check(EParams::AfterArrow, arena, state, min_indent, false)?;
+
+        let params = ModuleParams {
+            pattern,
+            before_arrow,
+            after_arrow,
+        };
+        Ok((MadeProgress, params, state))
+    }
 }
 
 // TODO does this need to be a macro?
@@ -192,11 +206,10 @@ fn hosted_header<'a>() -> impl Parser<'a, HostedHeader<'a>, EHeader<'a>> {
     .trace("hosted_header")
 }
 
-fn chomp_module_name(buffer: &[u8]) -> Result<&str, Progress> {
+pub(crate) fn chomp_module_name(buffer: &[u8]) -> Result<&str, Progress> {
     use encode_unicode::CharExt;
 
     let mut chomped = 0;
-
     if let Ok((first_letter, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
         if first_letter.is_uppercase() {
             chomped += width;
@@ -239,12 +252,10 @@ fn chomp_module_name(buffer: &[u8]) -> Result<&str, Progress> {
 }
 
 #[inline(always)]
-fn module_name<'a>() -> impl Parser<'a, ModuleName<'a>, ()> {
+pub(crate) fn module_name<'a>() -> impl Parser<'a, ModuleName<'a>, ()> {
     |_, mut state: State<'a>, _min_indent: u32| match chomp_module_name(state.bytes()) {
         Ok(name) => {
-            let width = name.len();
-            state = state.advance(width);
-
+            state.advance_mut(name.len());
             Ok((MadeProgress, ModuleName::new(name), state))
         }
         Err(progress) => Err((progress, ())),
@@ -466,7 +477,6 @@ fn provides_to_package<'a>() -> impl Parser<'a, To<'a>, EProvides<'a>> {
     ]
 }
 
-#[inline(always)]
 fn provides_to<'a>() -> impl Parser<'a, ProvidesTo<'a>, EProvides<'a>> {
     record!(ProvidesTo {
         provides_keyword: spaces_around_keyword(
@@ -478,7 +488,6 @@ fn provides_to<'a>() -> impl Parser<'a, ProvidesTo<'a>, EProvides<'a>> {
         entries: collection_trailing_sep_e(
             byte(b'[', EProvides::ListStart),
             exposes_entry(EProvides::Identifier),
-            byte(b',', EProvides::ListEnd),
             byte(b']', EProvides::ListEnd),
             Spaced::SpaceBefore
         ),
@@ -509,7 +518,6 @@ fn provides_exposed<'a>() -> impl Parser<
         item: collection_trailing_sep_e(
             byte(b'[', EProvides::ListStart),
             exposes_entry(EProvides::Identifier),
-            byte(b',', EProvides::ListEnd),
             byte(b']', EProvides::ListEnd),
             Spaced::SpaceBefore
         ),
@@ -534,7 +542,6 @@ fn provides_types<'a>(
         collection_trailing_sep_e(
             byte(b'{', EProvides::ListStart),
             provides_type_entry(EProvides::Identifier),
-            byte(b',', EProvides::ListEnd),
             byte(b'}', EProvides::ListEnd),
             Spaced::SpaceBefore,
         ),
@@ -563,10 +570,17 @@ where
     F: Copy,
     E: 'a,
 {
-    loc(map(
-        specialize_err(move |_, pos| to_expectation(pos), unqualified_ident()),
-        |n| Spaced::Item(ExposedName::new(n)),
-    ))
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        let ident_pos = state.pos();
+        match unqualified_ident().parse(arena, state, min_indent) {
+            Ok((p, ident, state)) => {
+                let ident = Spaced::Item(ExposedName::new(ident));
+                let ident = Loc::pos(ident_pos, state.pos(), ident);
+                Ok((p, ident, state))
+            }
+            Err((p, _)) => Err((p, to_expectation(ident_pos))),
+        }
+    }
 }
 
 #[inline(always)]
@@ -600,7 +614,6 @@ fn requires_rigids<'a>(
             |_, pos| ERequires::Rigid(pos),
             loc(map(ident::uppercase(), Spaced::Item)),
         ),
-        byte(b',', ERequires::ListEnd),
         byte(b'}', ERequires::ListEnd),
         Spaced::SpaceBefore,
     )
@@ -609,13 +622,16 @@ fn requires_rigids<'a>(
 #[inline(always)]
 fn requires_typed_ident<'a>(
 ) -> impl Parser<'a, Collection<'a, Loc<Spaced<'a, TypedIdent<'a>>>>, ERequires<'a>> {
-    reset_min_indent(collection_trailing_sep_e(
+    skip_first(
         byte(b'{', ERequires::ListStart),
-        specialize_err(ERequires::TypedIdent, loc(typed_ident())),
-        byte(b',', ERequires::ListEnd),
-        byte(b'}', ERequires::ListEnd),
-        Spaced::SpaceBefore,
-    ))
+        skip_second(
+            reset_min_indent(collection_inner(
+                specialize_err(ERequires::TypedIdent, loc(typed_ident())),
+                Spaced::SpaceBefore,
+            )),
+            byte(b'}', ERequires::ListEnd),
+        ),
+    )
 }
 
 #[inline(always)]
@@ -646,12 +662,12 @@ fn exposes_list<'a>() -> impl Parser<'a, Collection<'a, Loc<Spaced<'a, ExposedNa
     collection_trailing_sep_e(
         byte(b'[', EExposes::ListStart),
         exposes_entry(EExposes::Identifier),
-        byte(b',', EExposes::ListEnd),
         byte(b']', EExposes::ListEnd),
         Spaced::SpaceBefore,
     )
 }
 
+// todo: @wip inline insides
 pub fn spaces_around_keyword<'a, K: Keyword, E>(
     keyword_item: K,
     expectation: fn(Position) -> E,
@@ -702,7 +718,6 @@ fn exposes_module_collection<'a>(
     collection_trailing_sep_e(
         byte(b'[', EExposes::ListStart),
         exposes_module(EExposes::Identifier),
-        byte(b',', EExposes::ListEnd),
         byte(b']', EExposes::ListEnd),
         Spaced::SpaceBefore,
     )
@@ -750,7 +765,6 @@ fn packages_collection<'a>(
     collection_trailing_sep_e(
         byte(b'{', EPackages::ListStart),
         specialize_err(EPackages::PackageEntry, loc(package_entry())),
-        byte(b',', EPackages::ListEnd),
         byte(b'}', EPackages::ListEnd),
         Spaced::SpaceBefore,
     )
@@ -772,7 +786,6 @@ fn imports<'a>() -> impl Parser<
         item: collection_trailing_sep_e(
             byte(b'[', EImports::ListStart),
             loc(imports_entry()),
-            byte(b',', EImports::ListEnd),
             byte(b']', EImports::ListEnd),
             Spaced::SpaceBefore
         )
@@ -780,39 +793,40 @@ fn imports<'a>() -> impl Parser<
     .trace("imports")
 }
 
-#[inline(always)]
+/// e.g. printLine : Str -> Effect {}
 pub fn typed_ident<'a>() -> impl Parser<'a, Spaced<'a, TypedIdent<'a>>, ETypedIdent<'a>> {
-    // e.g.
-    //
-    // printLine : Str -> Effect {}
-    map(
-        and(
-            and(
-                loc(specialize_err(
-                    |_, pos| ETypedIdent::Identifier(pos),
-                    lowercase_ident(),
-                )),
-                space0_e(ETypedIdent::IndentHasType),
-            ),
-            skip_first(
-                byte(b':', ETypedIdent::HasType),
-                space0_before_e(
-                    specialize_err(
-                        ETypedIdent::Type,
-                        reset_min_indent(type_annotation::located(true)),
-                    ),
-                    ETypedIdent::IndentType,
-                ),
-            ),
-        ),
-        |((ident, spaces_before_colon), ann)| {
-            Spaced::Item(TypedIdent {
-                ident,
-                spaces_before_colon,
-                ann,
-            })
-        },
-    )
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        let start = state.pos();
+
+        let (ident, state) = match parse_lowercase_ident(state) {
+            Ok((_, out, state)) => (Loc::pos(start, state.pos(), out), state),
+            Err((p, _)) => return Err((p, ETypedIdent::Identifier(start))),
+        };
+
+        let (_, spaces_before_colon, state) =
+            eat_space_check(ETypedIdent::IndentHasType, arena, state, min_indent, true)?;
+
+        if state.bytes().first() != Some(&b':') {
+            return Err((MadeProgress, ETypedIdent::HasType(state.pos())));
+        }
+        let state = state.inc();
+
+        let (_, spaces_after_colon, state) =
+            eat_space_check(ETypedIdent::IndentType, arena, state, min_indent, true)?;
+
+        let ann_pos = state.pos();
+        match type_expr(TRAILING_COMMA_VALID | SKIP_PARSING_SPACES_BEFORE).parse(arena, state, 0) {
+            Ok((_, ann, state)) => {
+                let typed_ident = Spaced::Item(TypedIdent {
+                    ident,
+                    spaces_before_colon,
+                    ann: ann.spaced_before(arena, spaces_after_colon),
+                });
+                Ok((MadeProgress, typed_ident, state))
+            }
+            Err((_, fail)) => Err((MadeProgress, ETypedIdent::Type(fail, ann_pos))),
+        }
+    }
 }
 
 fn shortname<'a>() -> impl Parser<'a, &'a str, EImports> {
@@ -828,7 +842,6 @@ where
     specialize_err(move |_, pos| to_expectation(pos), module_name())
 }
 
-#[inline(always)]
 fn imports_entry<'a>() -> impl Parser<'a, Spaced<'a, ImportsEntry<'a>>, EImports> {
     type Temp<'a> = (
         (Option<&'a str>, ModuleName<'a>),
@@ -865,7 +878,6 @@ fn imports_entry<'a>() -> impl Parser<'a, Spaced<'a, ImportsEntry<'a>>, EImports
                     collection_trailing_sep_e(
                         byte(b'{', EImports::SetStart),
                         exposes_entry(EImports::Identifier),
-                        byte(b',', EImports::SetEnd),
                         byte(b'}', EImports::SetEnd),
                         Spaced::SpaceBefore
                     )
@@ -1341,17 +1353,17 @@ pub fn package_entry<'a>() -> impl Parser<'a, Spaced<'a, PackageEntry<'a>>, EPac
 }
 
 pub fn package_name<'a>() -> impl Parser<'a, PackageName<'a>, EPackageName<'a>> {
-    then(
-        loc(specialize_err(
-            EPackageName::BadPath,
-            string_literal::parse_str_literal(),
-        )),
-        move |_arena, state, progress, text| match text.value {
-            StrLiteral::PlainLine(text) => Ok((progress, PackageName(text), state)),
-            StrLiteral::Line(_) => Err((progress, EPackageName::Escapes(text.region.start()))),
-            StrLiteral::Block(_) => Err((progress, EPackageName::Multiline(text.region.start()))),
-        },
-    )
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        let name_pos = state.pos();
+        match string_literal::parse_str_literal().parse(arena, state, min_indent) {
+            Ok((p, name, state)) => match name {
+                StrLiteral::PlainLine(text) => Ok((p, PackageName(text), state)),
+                StrLiteral::Line(_) => Err((p, EPackageName::Escapes(name_pos))),
+                StrLiteral::Block(_) => Err((p, EPackageName::Multiline(name_pos))),
+            },
+            Err((p, fail)) => Err((p, EPackageName::BadPath(fail, name_pos))),
+        }
+    }
 }
 
 impl<'a, K, V> Malformed for KeywordItem<'a, K, V>

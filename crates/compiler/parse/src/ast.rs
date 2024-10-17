@@ -8,6 +8,7 @@ use crate::ident::Accessor;
 use crate::parser::ESingleQuote;
 use bumpalo::collections::{String, Vec};
 use bumpalo::Bump;
+use educe::Educe;
 use roc_collections::soa::{EitherIndex, Index, Slice};
 use roc_error_macros::internal_error;
 use roc_module::called_via::{BinOp, CalledVia, UnaryOp};
@@ -399,6 +400,18 @@ pub enum TryTarget {
     Result,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ClosureShortcut {
+    BinOp,
+    Access,
+}
+
+// todo: @perf consider making it a bool to save the space in Var, etc.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ClosureShortcutForAccess {
+    Yes,
+}
+
 /// A parsed expression. This uses lifetimes extensively for two reasons:
 ///
 /// 1. It uses Bump::alloc for all allocations, which returns a reference.
@@ -408,7 +421,8 @@ pub enum TryTarget {
 /// we move on to canonicalization, which often needs to allocate more because
 /// it's doing things like turning local variables into fully qualified symbols.
 /// Once canonicalization is done, the arena and the input string get dropped.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Educe)]
+#[educe(Debug(bound(*)))]
 pub enum Expr<'a> {
     // Number Literals
     Float(&'a str),
@@ -425,7 +439,11 @@ pub enum Expr<'a> {
     SingleQuote(&'a str),
 
     /// Look up exactly one field on a record, e.g. `x.foo`.
-    RecordAccess(&'a Expr<'a>, &'a str),
+    RecordAccess(
+        &'a Expr<'a>,
+        &'a str,
+        #[educe(Debug(ignore))] Option<ClosureShortcutForAccess>,
+    ),
 
     /// e.g. `.foo` or `.0`
     AccessorFunction(Accessor<'a>),
@@ -434,7 +452,11 @@ pub enum Expr<'a> {
     RecordUpdater(&'a str),
 
     /// Look up exactly one field on a tuple, e.g. `(x, y).1`.
-    TupleAccess(&'a Expr<'a>, &'a str),
+    TupleAccess(
+        &'a Expr<'a>,
+        &'a str,
+        #[educe(Debug(ignore))] Option<ClosureShortcutForAccess>,
+    ),
 
     /// Early return on failures - e.g. the ! in `File.readUtf8! path`
     TrySuffix {
@@ -468,6 +490,10 @@ pub enum Expr<'a> {
     Var {
         module_name: &'a str, // module_name will only be filled if the original Roc code stated something like `5 + SomeModule.myVar`, module_name will be blank if it was `5 + myVar`
         ident: &'a str,
+        // Shortcut instructs to output the variable in the context of closure shortcut as '.' for the shortcut identity function `\.`
+        // todo: @revisit for now ignoring it in the AST snapshot testing
+        #[educe(Debug(ignore))]
+        closure_shortcut: Option<ClosureShortcutForAccess>,
     },
 
     Underscore(&'a str),
@@ -481,8 +507,13 @@ pub enum Expr<'a> {
     // Reference to an opaque type, e.g. @Opaq
     OpaqueRef(&'a str),
 
-    // Pattern Matching
-    Closure(&'a [Loc<Pattern<'a>>], &'a Loc<Expr<'a>>),
+    // Closure with parameter patterns, body, and flag saying if it is a @feat shortcut-closure
+    Closure(
+        &'a [Loc<Pattern<'a>>],
+        &'a Loc<Expr<'a>>,
+        #[educe(Debug(ignore))] Option<ClosureShortcut>,
+    ),
+
     /// Multiple defs in a row
     Defs(&'a Defs<'a>, &'a Loc<Expr<'a>>),
 
@@ -538,6 +569,26 @@ pub enum Expr<'a> {
 }
 
 impl Expr<'_> {
+    pub fn new_var<'a>(module_name: &'a str, ident: &'a str) -> Expr<'a> {
+        Expr::Var {
+            module_name,
+            ident,
+            closure_shortcut: None,
+        }
+    }
+
+    pub const fn new_var_shortcut<'a>(
+        module_name: &'a str,
+        ident: &'a str,
+        closure_shortcut: Option<ClosureShortcutForAccess>,
+    ) -> Expr<'a> {
+        Expr::Var {
+            module_name,
+            ident,
+            closure_shortcut,
+        }
+    }
+
     pub fn get_region_spanning_binops(&self) -> Region {
         match self {
             Expr::BinOps(firsts, last) => {
@@ -576,7 +627,7 @@ pub fn is_top_level_suffixed(expr: &Expr) -> bool {
     }
 }
 
-/// Check if the bang suffix is applied recursevely in expression
+/// Check if the bang suffix is applied recursively in expression
 pub fn is_expr_suffixed(expr: &Expr) -> bool {
     match expr {
         // expression without arguments, `read!`
@@ -617,7 +668,7 @@ pub fn is_expr_suffixed(expr: &Expr) -> bool {
         Expr::ParensAround(sub_loc_expr) => is_expr_suffixed(sub_loc_expr),
 
         // expression in a closure
-        Expr::Closure(_, sub_loc_expr) => is_expr_suffixed(&sub_loc_expr.value),
+        Expr::Closure(_, sub_loc_expr, _) => is_expr_suffixed(&sub_loc_expr.value),
 
         // expressions inside a Defs
         Expr::Defs(defs, expr) => {
@@ -637,10 +688,10 @@ pub fn is_expr_suffixed(expr: &Expr) -> bool {
         Expr::NonBase10Int { .. } => false,
         Expr::Str(_) => false,
         Expr::SingleQuote(_) => false,
-        Expr::RecordAccess(a, _) => is_expr_suffixed(a),
+        Expr::RecordAccess(a, _, _) => is_expr_suffixed(a),
         Expr::AccessorFunction(_) => false,
         Expr::RecordUpdater(_) => false,
-        Expr::TupleAccess(a, _) => is_expr_suffixed(a),
+        Expr::TupleAccess(a, _, _) => is_expr_suffixed(a),
         Expr::List(items) => items.iter().any(|x| is_expr_suffixed(&x.value)),
         Expr::RecordUpdate { update, fields } => {
             is_expr_suffixed(&update.value)
@@ -916,7 +967,7 @@ impl<'a, 'b> RecursiveValueDefIter<'a, 'b> {
                     expr_stack.push(&map2.value);
                     push_stack_from_record_fields!(fields);
                 }
-                Closure(_, body) => expr_stack.push(&body.value),
+                Closure(_, body, _) => expr_stack.push(&body.value),
                 Backpassing(_, a, b) => {
                     expr_stack.reserve(2);
                     expr_stack.push(&a.value);
@@ -985,8 +1036,8 @@ impl<'a, 'b> RecursiveValueDefIter<'a, 'b> {
                         }
                     }
                 }
-                RecordAccess(expr, _)
-                | TupleAccess(expr, _)
+                RecordAccess(expr, _, _)
+                | TupleAccess(expr, _, _)
                 | TrySuffix { expr, .. }
                 | SpaceBefore(expr, _)
                 | SpaceAfter(expr, _)
@@ -2064,28 +2115,6 @@ pub trait Spaceable<'a> {
     fn before(&'a self, _: &'a [CommentOrNewline<'a>]) -> Self;
     fn after(&'a self, _: &'a [CommentOrNewline<'a>]) -> Self;
 
-    fn maybe_before(self, arena: &'a Bump, spaces: &'a [CommentOrNewline<'a>]) -> Self
-    where
-        Self: Sized + 'a,
-    {
-        if spaces.is_empty() {
-            self
-        } else {
-            arena.alloc(self).before(spaces)
-        }
-    }
-
-    fn maybe_after(self, arena: &'a Bump, spaces: &'a [CommentOrNewline<'a>]) -> Self
-    where
-        Self: Sized + 'a,
-    {
-        if spaces.is_empty() {
-            self
-        } else {
-            arena.alloc(self).after(spaces)
-        }
-    }
-
     fn with_spaces_before(&'a self, spaces: &'a [CommentOrNewline<'a>], region: Region) -> Loc<Self>
     where
         Self: Sized,
@@ -2201,11 +2230,13 @@ impl<'a> Expr<'a> {
     pub const REPL_OPAQUE_FUNCTION: Self = Expr::Var {
         module_name: "",
         ident: "<function>",
+        closure_shortcut: None,
     };
 
     pub const REPL_RUNTIME_CRASH: Self = Expr::Var {
         module_name: "",
         ident: "*",
+        closure_shortcut: None,
     };
 
     pub fn loc_ref(&'a self, region: Region) -> Loc<&'a Self> {
@@ -2444,8 +2475,8 @@ impl<'a> Malformed for Expr<'a> {
 
             Str(inner) => inner.is_malformed(),
 
-            RecordAccess(inner, _) |
-            TupleAccess(inner, _) |
+            RecordAccess(inner, _, _) |
+            TupleAccess(inner, _, _) |
             TrySuffix { expr: inner, .. } => inner.is_malformed(),
 
             List(items) => items.is_malformed(),
@@ -2456,7 +2487,7 @@ impl<'a> Malformed for Expr<'a> {
 
             RecordBuilder { mapper: map2, fields } => map2.is_malformed() || fields.is_malformed(),
 
-            Closure(args, body) => args.iter().any(|arg| arg.is_malformed()) || body.is_malformed(),
+            Closure(args, body, _) => args.iter().any(|arg| arg.is_malformed()) || body.is_malformed(),
             Defs(defs, body) => defs.is_malformed() || body.is_malformed(),
             Backpassing(args, call, body) => args.iter().any(|arg| arg.is_malformed()) || call.is_malformed() || body.is_malformed(),
             Expect(condition, continuation) => condition.is_malformed() || continuation.is_malformed(),

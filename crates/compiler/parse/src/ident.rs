@@ -52,54 +52,25 @@ pub enum Ident<'a> {
     Malformed(&'a str, BadIdent),
 }
 
+pub fn lowercase_ident<'a>() -> impl Parser<'a, &'a str, ()> {
+    move |_, state: State<'a>, _: u32| parse_lowercase_ident(state)
+}
+
 /// This could be:
 ///
 /// * A record field, e.g. "email" in `.email` or in `email:`
 /// * A named pattern match, e.g. "foo" in `foo =` or `foo ->` or `\foo ->`
-pub fn lowercase_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_lowercase_part(state.bytes()) {
+#[inline(always)]
+pub fn parse_lowercase_ident<'a>(state: State<'a>) -> ParseResult<'a, &'a str, ()> {
+    match chomp_lowercase_part(state.bytes()) {
         Err(progress) => Err((progress, ())),
         Ok(ident) => {
             if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
                 Err((NoProgress, ()))
             } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
+                Ok((MadeProgress, ident, state.advance(ident.len())))
             }
         }
-    }
-}
-
-/// This is a tuple accessor, e.g. "1" in `.1`
-pub fn integer_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_integer_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident, state.advance(width)))
-        }
-    }
-}
-
-/// Like `lowercase_ident`, but returns an error with MadeProgress if the
-/// identifier is a keyword.
-pub fn lowercase_ident_keyword_e<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_lowercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
-                Err((MadeProgress, ()))
-            } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
-            }
-        }
-    }
-}
-
-pub fn tag_name<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |arena, state: State<'a>, min_indent: u32| {
-        uppercase_ident().parse(arena, state, min_indent)
     }
 }
 
@@ -111,60 +82,54 @@ pub fn tag_name<'a>() -> impl Parser<'a, &'a str, ()> {
 pub fn uppercase<'a>() -> impl Parser<'a, UppercaseIdent<'a>, ()> {
     move |_, state: State<'a>, _min_indent: u32| match chomp_uppercase_part(state.bytes()) {
         Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident.into(), state.advance(width)))
-        }
+        Ok(ident) => Ok((MadeProgress, ident.into(), state.advance(ident.len()))),
     }
 }
 
-/// This could be:
-///
-/// * A module name
-/// * A type name
-/// * A tag
-pub fn uppercase_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_uppercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident, state.advance(width)))
-        }
-    }
-}
-
+// todo: @wip
 pub fn unqualified_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_anycase_part(state.bytes()) {
+    move |_, state: State<'a>, _: u32| match chomp_anycase_part(state.bytes()) {
         Err(progress) => Err((progress, ())),
         Ok(ident) => {
             if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
                 Err((MadeProgress, ()))
             } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
+                Ok((MadeProgress, ident, state.advance(ident.len())))
             }
         }
     }
 }
 
-macro_rules! advance_state {
-    ($state:expr, $n:expr) => {
-        Ok($state.advance($n))
-    };
-}
+/// This is a helper function for parsing function args.
+/// The rules for (-) are special-cased, and they come up in function args.
+///
+/// They work like this:
+///
+/// x - y  # "x minus y"
+/// x-y    # "x minus y"
+/// x- y   # "x minus y" (probably written in a rush)
+/// x -y   # "call x, passing (-y)"
+///
+/// Since operators have higher precedence than function application,
+/// any time we encounter a '-' it is unary iff it is both preceded by spaces
+/// and is *not* followed by a whitespace character.
 
-pub fn parse_ident<'a>(
-    arena: &'a Bump,
-    state: State<'a>,
-    _min_indent: u32,
-) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
+/// When we parse an ident like `foo ` it could be any of these:
+///
+/// 1. A standalone variable with trailing whitespace (e.g. because an operator is next)
+/// 2. The beginning of a function call (e.g. `foo bar baz`)
+/// 3. The beginning of a definition (e.g. `foo =`)
+/// 4. The beginning of a type annotation (e.g. `foo :`)
+/// 5. A reserved keyword (e.g. `if ` or `when `), meaning we should do something else.
+pub fn parse_ident<'a>(arena: &'a Bump, state: State<'a>) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
     let initial = state.clone();
-
     match chomp_identifier_chain(arena, state.bytes(), state.pos()) {
         Ok((width, ident)) => {
-            let state = advance_state!(state, width as usize)?;
+            let state = state.advance(width as usize);
+
             if let Ident::Access { module_name, parts } = ident {
                 if module_name.is_empty() {
+                    // todo: @perf the call site may already check the keywords first, so should we always recheck?
                     if let Some(first) = parts.first() {
                         for keyword in crate::keyword::KEYWORDS.iter() {
                             if first == &Accessor::RecordField(keyword) {
@@ -173,8 +138,6 @@ pub fn parse_ident<'a>(
                         }
                     }
                 }
-
-                return Ok((MadeProgress, Ident::Access { module_name, parts }, state));
             }
 
             Ok((MadeProgress, ident, state))
@@ -183,27 +146,25 @@ pub fn parse_ident<'a>(
         Err((width, fail)) => match fail {
             BadIdent::Start(pos) => Err((NoProgress, EExpr::Start(pos))),
             BadIdent::Space(e, pos) => Err((NoProgress, EExpr::Space(e, pos))),
-            _ => malformed_identifier(
-                initial.bytes(),
-                fail,
-                advance_state!(state, width as usize)?,
-            ),
+            _ => {
+                let (ident, state) =
+                    malformed_ident(initial.bytes(), fail, state.advance(width as usize));
+                Ok((MadeProgress, ident, state))
+            }
         },
     }
 }
 
-fn malformed_identifier<'a>(
+pub(crate) fn malformed_ident<'a>(
     initial_bytes: &'a [u8],
     problem: BadIdent,
-    mut state: State<'a>,
-) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
+    state: State<'a>,
+) -> (Ident<'a>, State<'a>) {
     let chomped = chomp_malformed(state.bytes());
     let delta = initial_bytes.len() - state.bytes().len();
     let parsed_str = unsafe { std::str::from_utf8_unchecked(&initial_bytes[..chomped + delta]) };
-
-    state = state.advance(chomped);
-
-    Ok((MadeProgress, Ident::Malformed(parsed_str, problem), state))
+    let ident = Ident::Malformed(parsed_str, problem);
+    (ident, state.advance(chomped))
 }
 
 /// skip forward to the next non-identifier character
@@ -251,11 +212,11 @@ fn is_alnum(ch: char) -> bool {
     ch.is_alphabetic() || ch.is_ascii_digit()
 }
 
-fn chomp_lowercase_part(buffer: &[u8]) -> Result<&str, Progress> {
+pub(crate) fn chomp_lowercase_part(buffer: &[u8]) -> Result<&str, Progress> {
     chomp_part(char::is_lowercase, is_alnum, buffer)
 }
 
-fn chomp_uppercase_part(buffer: &[u8]) -> Result<&str, Progress> {
+pub(crate) fn chomp_uppercase_part(buffer: &[u8]) -> Result<&str, Progress> {
     chomp_part(char::is_uppercase, is_alnum, buffer)
 }
 
@@ -263,7 +224,7 @@ fn chomp_anycase_part(buffer: &[u8]) -> Result<&str, Progress> {
     chomp_part(char::is_alphabetic, is_alnum, buffer)
 }
 
-fn chomp_integer_part(buffer: &[u8]) -> Result<&str, Progress> {
+pub(crate) fn chomp_integer_part(buffer: &[u8]) -> Result<&str, Progress> {
     chomp_part(
         |ch| char::is_ascii_digit(&ch),
         |ch| char::is_ascii_digit(&ch),
@@ -302,7 +263,7 @@ where
         }
     }
 
-    if let Ok((next, _width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
+    if let Ok((next, _)) = char::from_utf8_slice_start(&buffer[chomped..]) {
         // This would mean we have e.g.:
         // * identifier followed by a _
         // * an integer followed by an alphabetic char
@@ -501,35 +462,30 @@ fn chomp_identifier_chain<'a>(
             parts.push(Accessor::RecordField(first_part));
         }
 
-        match chomp_access_chain(&buffer[chomped..], &mut parts) {
+        let offset = chomped as u32;
+        match chomp_access_chain(&buffer[offset as usize..], &mut parts) {
             Ok(width) => {
-                if matches!(parts[0], Accessor::TupleIndex(_)) && first_is_uppercase {
+                if first_is_uppercase && matches!(parts[0], Accessor::TupleIndex(_)) {
                     return Err((
-                        chomped as u32,
-                        BadIdent::QualifiedTupleAccessor(pos.bump_column(chomped as u32)),
+                        offset,
+                        BadIdent::QualifiedTupleAccessor(pos.bump_column(offset)),
                     ));
                 }
 
-                chomped += width as usize;
-
-                let ident = Ident::Access {
-                    module_name,
-                    parts: parts.into_bump_slice(),
-                };
-
-                Ok((chomped as u32, ident))
+                let parts = parts.into_bump_slice();
+                let ident = Ident::Access { module_name, parts };
+                Ok((offset + width, ident))
             }
-            Err(0) if !module_name.is_empty() => Err((
-                chomped as u32,
-                BadIdent::QualifiedTag(pos.bump_column(chomped as u32)),
-            )),
+            Err(0) if !module_name.is_empty() => {
+                Err((offset, BadIdent::QualifiedTag(pos.bump_column(offset))))
+            }
             Err(1) if parts.is_empty() => Err((
-                chomped as u32 + 1,
-                BadIdent::WeirdDotQualified(pos.bump_column(chomped as u32 + 1)),
+                offset + 1,
+                BadIdent::WeirdDotQualified(pos.bump_column(offset + 1)),
             )),
             Err(width) => Err((
-                chomped as u32 + width,
-                BadIdent::WeirdDotAccess(pos.bump_column(chomped as u32 + width)),
+                offset + width,
+                BadIdent::WeirdDotAccess(pos.bump_column(offset + width)),
             )),
         }
     } else if let Ok(('_', _)) = char::from_utf8_slice_start(&buffer[chomped..]) {
@@ -581,17 +537,8 @@ fn chomp_module_chain(buffer: &[u8]) -> Result<u32, Progress> {
     }
 }
 
-pub fn concrete_type<'a>() -> impl Parser<'a, (&'a str, &'a str), ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_concrete_type(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok((module_name, type_name, width)) => {
-            Ok((MadeProgress, (module_name, type_name), state.advance(width)))
-        }
-    }
-}
-
 // parse a type name like `Result` or `Result.Result`
-fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
+pub(crate) fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
     let first = crate::ident::chomp_uppercase_part(buffer)?;
 
     if let Some(b'.') = buffer.get(first.len()) {
@@ -625,37 +572,33 @@ fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
     }
 }
 
-fn chomp_access_chain<'a>(buffer: &'a [u8], parts: &mut Vec<'a, Accessor<'a>>) -> Result<u32, u32> {
+pub(crate) fn chomp_access_chain<'a>(
+    buffer: &'a [u8],
+    parts: &mut Vec<'a, Accessor<'a>>,
+) -> Result<u32, u32> {
     let mut chomped = 0;
-
     while let Some(b'.') = buffer.get(chomped) {
-        match &buffer.get(chomped + 1..) {
+        let next = chomped + 1;
+        match &buffer.get(next..) {
             Some(slice) => match chomp_lowercase_part(slice) {
                 Ok(name) => {
-                    let value = unsafe {
-                        std::str::from_utf8_unchecked(
-                            &buffer[chomped + 1..chomped + 1 + name.len()],
-                        )
-                    };
+                    let value =
+                        unsafe { std::str::from_utf8_unchecked(&buffer[next..next + name.len()]) };
                     parts.push(Accessor::RecordField(value));
-
-                    chomped += name.len() + 1;
+                    chomped = next + name.len();
                 }
                 Err(_) => match chomp_integer_part(slice) {
                     Ok(name) => {
                         let value = unsafe {
-                            std::str::from_utf8_unchecked(
-                                &buffer[chomped + 1..chomped + 1 + name.len()],
-                            )
+                            std::str::from_utf8_unchecked(&buffer[next..next + name.len()])
                         };
                         parts.push(Accessor::TupleIndex(value));
-
-                        chomped += name.len() + 1;
+                        chomped = next + name.len();
                     }
-                    Err(_) => return Err(chomped as u32 + 1),
+                    Err(_) => return Err(next as u32),
                 },
             },
-            None => return Err(chomped as u32 + 1),
+            None => return Err(next as u32),
         }
     }
 

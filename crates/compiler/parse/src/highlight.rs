@@ -6,12 +6,12 @@ use roc_region::all::{Loc, Region};
 
 use crate::{
     ast::CommentOrNewline,
-    blankspace::loc_spaces,
+    blankspace::eat_space_locs,
     keyword::KEYWORDS,
-    number_literal::positive_number_literal,
-    parser::{EExpr, ParseResult, Parser},
+    number_literal::parse_number_base,
+    parser::Parser,
     state::State,
-    string_literal::{parse_str_like_literal, StrLikeLiteral},
+    string_literal::{rest_of_str_like, StrLikeLiteral},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,9 +97,7 @@ fn highlight_inner<'a>(
         if let Ok((b, _width)) = char::from_utf8_slice_start(state.bytes()) {
             match b {
                 ' ' | '\n' | '\t' | '\r' | '#' => {
-                    let res: ParseResult<'a, _, EExpr<'a>> =
-                        loc_spaces().parse(arena, state.clone(), 0);
-                    if let Ok((_, spaces, new_state)) = res {
+                    if let Some((spaces, new_state)) = eat_space_locs(arena, state.clone()) {
                         state = new_state;
                         for space in spaces {
                             let token = match space.value {
@@ -116,22 +114,18 @@ fn highlight_inner<'a>(
                     }
                 }
                 '"' | '\'' => {
+                    let column = state.column();
+                    state.advance_mut(1);
                     if let Ok((_, item, new_state)) =
-                        parse_str_like_literal().parse(arena, state.clone(), 0)
+                        rest_of_str_like(b == '\'', column, arena, state.clone(), 0)
                     {
                         state = new_state;
                         match item {
                             StrLikeLiteral::SingleQuote(_) => {
-                                tokens.push(Loc::at(
-                                    Region::between(start, state.pos()),
-                                    Token::SingleQuote,
-                                ));
+                                tokens.push(Loc::pos(start, state.pos(), Token::SingleQuote));
                             }
                             StrLikeLiteral::Str(_) => {
-                                tokens.push(Loc::at(
-                                    Region::between(start, state.pos()),
-                                    Token::String,
-                                ));
+                                tokens.push(Loc::pos(start, state.pos(), Token::String));
                             }
                         }
                     } else {
@@ -171,11 +165,11 @@ fn highlight_inner<'a>(
                 }
                 '.' => {
                     state.advance_mut(1);
-                    tokens.push(Loc::at(Region::between(start, state.pos()), Token::Decimal));
+                    tokens.push(Loc::pos(start, state.pos(), Token::Decimal));
                 }
                 '0'..='9' => {
-                    if let Ok((_, _item, new_state)) =
-                        positive_number_literal().parse(arena, state.clone(), 0)
+                    if let Ok((_, _, new_state)) =
+                        parse_number_base(false, state.bytes(), state.clone())
                     {
                         state = new_state;
                         tokens.push(Loc::at(Region::between(start, state.pos()), Token::Number));

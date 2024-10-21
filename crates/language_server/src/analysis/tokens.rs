@@ -660,10 +660,10 @@ impl IterTokens for Loc<Expr<'_>> {
             Expr::NonBase10Int { .. } => onetoken(Token::Number, region, arena),
             Expr::Str(_) => onetoken(Token::String, region, arena),
             Expr::SingleQuote(_) => onetoken(Token::String, region, arena),
-            Expr::RecordAccess(rcd, _field) => Loc::at(region, *rcd).iter_tokens(arena),
+            Expr::RecordAccess(rcd, ..) => Loc::at(region, *rcd).iter_tokens(arena),
             Expr::AccessorFunction(accessor) => Loc::at(region, accessor).iter_tokens(arena),
             Expr::RecordUpdater(updater) => Loc::at(region, updater).iter_tokens(arena),
-            Expr::TupleAccess(tup, _field) => Loc::at(region, *tup).iter_tokens(arena),
+            Expr::TupleAccess(tup, ..) => Loc::at(region, *tup).iter_tokens(arena),
             Expr::TrySuffix { expr: inner, .. } => Loc::at(region, *inner).iter_tokens(arena),
             Expr::List(lst) => lst.iter_tokens(arena),
             Expr::RecordUpdate { update, fields } => (update.iter_tokens(arena).into_iter())
@@ -679,7 +679,7 @@ impl IterTokens for Loc<Expr<'_>> {
             Expr::Crash => onetoken(Token::Keyword, region, arena),
             Expr::Tag(_) => onetoken(Token::Tag, region, arena),
             Expr::OpaqueRef(_) => onetoken(Token::Type, region, arena),
-            Expr::Closure(patterns, body) => (patterns.iter_tokens(arena).into_iter())
+            Expr::Closure(patterns, body, _) => (patterns.iter_tokens(arena).into_iter())
                 .chain(body.iter_tokens(arena))
                 .collect_in(arena),
             Expr::Defs(defs, exprs) => (defs.iter_tokens(arena).into_iter())

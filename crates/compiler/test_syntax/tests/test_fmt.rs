@@ -4679,7 +4679,257 @@ mod test_fmt {
     }
 
     #[test]
-    fn pipline_op_with_apply() {
+    fn func_call_trailing_lambda_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \x -> x |> Num.add 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_pizza_shortcut() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \|> Num.add 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_plus_shortcut() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \+ 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [{ foo: 1 }] .foo
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_closure_shortcut_field_access() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [{ foo: 1 }] \.foo
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                \x42 -> x42 |> Num.add 1
+            "
+        ));
+    }
+    #[test]
+    fn simple_closure_with_pipe_no_spaces() {
+        expr_formats_to(
+            indoc!(
+                r"
+                \x42->x42 |> Num.add 1
+            "
+            ),
+            indoc!(
+                r"
+                \x42 -> x42 |> Num.add 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn simple_closure_shortcut_pizza_pipe() {
+        expr_formats_same(indoc!(
+            r"
+            \|> Num.add 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_pizza_pipe_right_on_the_newline() {
+        expr_formats_same(indoc!(
+            r"
+            \|>
+                Num.add 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_pizza_pipe_right_on_the_newline() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \un -> un |>
+                Num.add 1
+            "
+            ),
+            indoc!(
+                r"
+            \un -> un
+                |>
+                Num.add 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn simple_closure_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo
+            f
+            "
+        ));
+    }
+
+    // note: @not_implemented but successfully parses
+    #[test]
+    fn simple_closure_nested_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo.bar
+            f
+            "
+        ));
+    }
+
+    // note: @not_implemented but successfully parses
+    #[test]
+    fn simple_closure_nested_field_accessor_plus_one() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo.bar + 1
+            f
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_type_def() {
+        expr_formats_same(indoc!(
+            r"
+            truex : Boolex
+            truex = @Boolex Falsex
+            truex
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_field_access() {
+        expr_formats_same(indoc!(
+            r"
+            \un -> un.foo
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_field_access_chain() {
+        expr_formats_same(indoc!(
+            r"
+            \un -> un.foo.bar.buz
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_field_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.foo
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_tuple_index_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.0
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_field_tuple_index_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.bru.0
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_field_as_part_of_bin_op() {
+        expr_formats_same(indoc!(
+            r"
+            \.foo + 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_field_space_format() {
+        expr_formats_to(
+            indoc!(
+                r"
+                \ .foo
+                "
+            ),
+            indoc!(
+                r"
+                \un -> un.foo
+                "
+            ),
+        );
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_identity_function() {
+        expr_formats_same(indoc!(
+            r"
+            \.
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_for_identity_function_format() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \ .
+            "
+            ),
+            indoc!(
+                r"
+            \un -> un
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn pipeline_op_with_apply() {
         expr_formats_same(indoc!(
             r"
             output
@@ -4699,8 +4949,16 @@ mod test_fmt {
                     i + length)
             "
         ));
+        expr_formats_same(indoc!(
+            r"
+            List.map
+                xs
+                (\+ length)
+            "
+        ));
     }
 
+    // note: word 'pipline' looks interesting :)
     #[test]
     fn pipline_apply_lambda_1() {
         expr_formats_same(indoc!(
@@ -4709,6 +4967,13 @@ mod test_fmt {
             |> List.map
                 xs
                 (\i -> i)
+            "
+        ));
+
+        expr_formats_same(indoc!(
+            r"
+            shout
+            |> List.map xs \.
             "
         ));
     }
@@ -4721,6 +4986,15 @@ mod test_fmt {
             |> List.map
                 xs
                 (\i -> i)
+            |> List.join
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            shout
+            |> List.map
+                xs
+                \.
             |> List.join
             "
         ));
@@ -4748,6 +5022,23 @@ mod test_fmt {
                 example = \model ->
                     model
                     |> withModel
+                        (\result ->
+                            when result is
+                                Err _ ->
+                                    Err {}
+
+                                Ok val ->
+                                    Ok {}
+                        )
+
+                example
+            "
+        ));
+
+        expr_formats_same(indoc!(
+            r"
+                example = \|>
+                    withModel
                         (\result ->
                             when result is
                                 Err _ ->
@@ -5806,6 +6097,17 @@ mod test_fmt {
         expr_formats_same(indoc!(
             r#"
             when foo is
+                "abc" -> ""
+            "#
+        ));
+    }
+
+    // todo: @wip
+    // #[test]
+    fn _single_line_string_literal_in_pattern_binop_shortcut() {
+        expr_formats_same(indoc!(
+            r#"
+            foo ~
                 "abc" -> ""
             "#
         ));

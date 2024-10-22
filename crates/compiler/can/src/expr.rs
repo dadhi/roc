@@ -966,9 +966,9 @@ pub fn canonicalize_expr<'a>(
                 (expr, output)
             }
         }
-        ast::Expr::Var { module_name, ident } => {
-            canonicalize_var_lookup(env, var_store, scope, module_name, ident, region)
-        }
+        ast::Expr::Var {
+            module_name, ident, ..
+        } => canonicalize_var_lookup(env, var_store, scope, module_name, ident, region),
         ast::Expr::Underscore(name) => {
             // we parse underscores, but they are not valid expression syntax
 
@@ -1022,7 +1022,7 @@ pub fn canonicalize_expr<'a>(
         ast::Expr::RecordUpdater(_) => {
             internal_error!("Record updater should have been desugared by now")
         }
-        ast::Expr::Closure(loc_arg_patterns, loc_body_expr) => {
+        ast::Expr::Closure(loc_arg_patterns, loc_body_expr, _) => {
             let (closure_data, output) =
                 canonicalize_closure(env, var_store, scope, loc_arg_patterns, loc_body_expr, None);
 
@@ -1076,7 +1076,7 @@ pub fn canonicalize_expr<'a>(
 
             (expr, output)
         }
-        ast::Expr::RecordAccess(record_expr, field) => {
+        ast::Expr::RecordAccess(record_expr, field, _) => {
             let (loc_expr, output) = canonicalize_expr(env, var_store, scope, region, record_expr);
 
             (
@@ -1105,7 +1105,7 @@ pub fn canonicalize_expr<'a>(
             }),
             Output::default(),
         ),
-        ast::Expr::TupleAccess(tuple_expr, field) => {
+        ast::Expr::TupleAccess(tuple_expr, field, _) => {
             let (loc_expr, output) = canonicalize_expr(env, var_store, scope, region, tuple_expr);
 
             (
@@ -2536,10 +2536,10 @@ pub fn is_valid_interpolation(expr: &ast::Expr<'_>) -> bool {
         | ast::Expr::OptionalFieldInRecordBuilder(_, loc_expr)
         | ast::Expr::PrecedenceConflict(PrecedenceConflict { expr: loc_expr, .. })
         | ast::Expr::UnaryOp(loc_expr, _)
-        | ast::Expr::Closure(_, loc_expr) => is_valid_interpolation(&loc_expr.value),
-        ast::Expr::TupleAccess(sub_expr, _)
+        | ast::Expr::Closure(_, loc_expr, _) => is_valid_interpolation(&loc_expr.value),
+        ast::Expr::TupleAccess(sub_expr, ..)
         | ast::Expr::ParensAround(sub_expr)
-        | ast::Expr::RecordAccess(sub_expr, _)
+        | ast::Expr::RecordAccess(sub_expr, ..)
         | ast::Expr::TrySuffix { expr: sub_expr, .. } => is_valid_interpolation(sub_expr),
         ast::Expr::Apply(loc_expr, args, _called_via) => {
             is_valid_interpolation(&loc_expr.value)

@@ -72,19 +72,6 @@ impl<'a> State<'a> {
         self.offset += offset;
     }
 
-    /// If the next `text.len()` bytes of the input match the provided `text`,
-    /// mutably advance the state by that much.
-    #[inline(always)]
-    pub(crate) fn consume_mut(&mut self, text: &str) -> bool {
-        let found = self.bytes().starts_with(text.as_bytes());
-
-        if found {
-            self.advance_mut(text.len());
-        }
-
-        found
-    }
-
     #[must_use]
     #[inline(always)]
     pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
@@ -94,8 +81,15 @@ impl<'a> State<'a> {
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance_newline(mut self) -> State<'a> {
+    pub(crate) const fn inc(mut self) -> State<'a> {
         self.offset += 1;
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub(crate) const fn advance_newline(mut self, offset: usize) -> State<'a> {
+        self.offset += offset;
         self.line_start = self.pos();
 
         // WARNING! COULD CAUSE BUGS IF WE FORGET TO CALL mark_current_indent LATER!

@@ -5405,7 +5405,7 @@ mod test_reporting {
              2 -> 2
             "
         ),
-        @r#"
+        @r###"
     ── UNKNOWN OPERATOR in tmp/when_outdented_branch/Test.roc ──────────────────────
 
     This looks like an operator, but it's not one I recognize!
@@ -5423,7 +5423,7 @@ mod test_reporting {
     In Roc, functions are always written as a lambda, like 
 
         increment = \n -> n + 1
-    "#
+    "###
     );
 
     test_report!(
@@ -5634,7 +5634,7 @@ mod test_reporting {
     test_report!(
         return_space_problem,
         "return \t",
-        @r"
+        @r###"
     ── TAB CHARACTER in tmp/return_space_problem/Test.roc ──────────────────────────
 
     I encountered a tab character:
@@ -5643,7 +5643,7 @@ mod test_reporting {
                    ^
 
     Tab characters are not allowed in Roc code. Please use spaces instead!
-    "
+    "###
     );
 
     test_report!(
@@ -6252,7 +6252,7 @@ All branches in an `if` must have the same type!
                 r#"
                 app "broken"
                     packages {
-                        pf: "https://github.com/roc-lang/basic-cli/releases/download/0.5.0/Cufzl36_SnJ4QbOoEmiJ5dIpUxBvdB3NEySvuH82Wio.tar.br",
+                        pf: "generic-test-platform/main.roc",
                     }
                     imports [
                         pf.Stdout,
@@ -14658,7 +14658,7 @@ All branches in an `if` must have the same type!
         leftover_statement,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14689,7 +14689,7 @@ All branches in an `if` must have the same type!
         fx_fn_annotated_as_pure,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14727,7 +14727,7 @@ All branches in an `if` must have the same type!
         fx_fn_annotated_as_pure_stmt,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14775,7 +14775,7 @@ All branches in an `if` must have the same type!
         nested_function_def_fx_no_bang,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14806,7 +14806,7 @@ All branches in an `if` must have the same type!
         ignored_result_stmt,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14838,7 +14838,7 @@ All branches in an `if` must have the same type!
         ignored_stmt_forgot_to_call,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14880,7 +14880,7 @@ All branches in an `if` must have the same type!
         function_def_leftover_bang,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14909,7 +14909,7 @@ All branches in an `if` must have the same type!
         effect_in_top_level_value_def,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14947,7 +14947,7 @@ All branches in an `if` must have the same type!
         aliased_fx_fn,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -14977,7 +14977,7 @@ All branches in an `if` must have the same type!
         unsuffixed_fx_in_record,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15009,7 +15009,7 @@ All branches in an `if` must have the same type!
         suffixed_pure_in_record,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15039,7 +15039,7 @@ All branches in an `if` must have the same type!
         unsuffixed_fx_arg,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15076,7 +15076,7 @@ All branches in an `if` must have the same type!
         suffixed_pure_arg,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15111,7 +15111,7 @@ All branches in an `if` must have the same type!
         unsuffixed_tuple_fx_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15155,7 +15155,7 @@ All branches in an `if` must have the same type!
         suffixed_tuple_pure_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15183,7 +15183,7 @@ All branches in an `if` must have the same type!
         unsuffixed_tag_fx_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15227,7 +15227,7 @@ All branches in an `if` must have the same type!
         suffixed_tag_pure_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15255,7 +15255,7 @@ All branches in an `if` must have the same type!
         unsuffixed_opaque_fx_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15287,7 +15287,7 @@ All branches in an `if` must have the same type!
         suffixed_opaque_pure_field,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15317,7 +15317,7 @@ All branches in an `if` must have the same type!
         fx_passed_to_untyped_pure_hof,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 
@@ -15360,7 +15360,7 @@ All branches in an `if` must have the same type!
         fx_passed_to_partially_inferred_pure_hof,
         indoc!(
             r#"
-            app [main!] { pf: platform "../../../../../examples/cli/effects-platform/main.roc" }
+            app [main!] { pf: platform "../../../../../crates/cli/tests/test-projects/test-platform-effects-zig/main.roc" }
 
             import pf.Effect
 

@@ -4706,6 +4706,18 @@ mod test_fmt {
                 list
             "
         ));
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \< 1
+                list
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \> 1
+                list
+            "
+        ));
     }
 
     #[test]
@@ -6377,6 +6389,34 @@ mod test_fmt {
                 _ -> "42"
             "#
         ));
+    }
+
+    #[test]
+    fn closure_shortcut_id_binop_with_when_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \. + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+
+        expr_formats_to(
+            indoc!(
+                r#"
+            \ . + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x -> x + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::ast::{
     ModuleImportParams, Pattern, Spaceable, Spaced, Spaces, SpacesBefore, TryTarget,
     TypeAnnotation, TypeDef, TypeHeader, ValueDef, WhenShortcut,
 };
-use crate::blankspace::{eat_nc, eat_nc_check, eat_space_loc_comments, SpacedBuilder};
+use crate::blankspace::{eat_nc, eat_nc_check, eat_nc_loc_c, SpacedBuilder};
 use crate::header::{chomp_module_name, ModuleName};
 use crate::ident::{
     chomp_access_chain, chomp_integer_part, chomp_lowercase_part, malformed_ident,
@@ -1530,7 +1530,7 @@ fn parse_stmt_operator<'a>(
     initial_state: State<'a>,
 ) -> ParseResult<'a, Stmt<'a>, EExpr<'a>> {
     let (_, spaces_after_op, state) =
-        eat_space_loc_comments(EExpr::IndentEnd, arena, state, min_indent, false)?;
+        eat_nc_loc_c(EExpr::IndentEnd, arena, state, min_indent, false)?;
 
     let op = loc_op.value;
     let op_start = loc_op.region.start();
@@ -2389,13 +2389,6 @@ fn rest_of_closure<'a>(
             Loc::pos(body_pos, ident_end, ident)
         };
 
-        // todo: @wip for the identity function and Unary Negate and Not, should we consider to stop here and return early
-        // to avoid putting the lambda in parens in the middle of the Apply list,
-        // e.g, instead of `Foo.bar (\.) 42` it enable us to write `Foo.bar \. 42`
-
-        // todo: @wip current RecordAccessor '.foo { foo: 3 }', RecordUpdater '&foo { foo: 1 } 2' functions are stopped here,
-        // basically implying the parens. I need to test the same cases with the closure shortcut.
-
         let err_pos = state.pos();
         let inc_indent: u32 = slash_indent + 1;
         let (body, state) =
@@ -2414,7 +2407,7 @@ fn rest_of_closure<'a>(
         return Ok((MadeProgress, closure, state));
     }
 
-    // Either pipe shortcut `\|> f` into `\p -> p |> f`, or the rest of BinOp's, e.g. `\+ 1` into `\p -> p + 1`,
+    // Either pipe shortcut `\|> f` into `\x -> x |> f`, or the rest of BinOp's, e.g. `\+ 1` into `\x -> x + 1`,
     // Excluding the operators for which the shortcut does not make sense, assignment '=', Type Alias ':', ':=', etc.
 
     let (binop_shortcut, binop, state) = if is_negate_op {
@@ -2574,8 +2567,7 @@ fn rest_of_closure<'a>(
     state.advance_mut(2);
 
     let body_indent = state.line_indent() + 1;
-    let (_, first_nl, state) =
-        eat_space_loc_comments(EClosure::IndentBody, arena, state, body_indent, true)?;
+    let (_, first_nl, state) = eat_nc_loc_c(EClosure::IndentBody, arena, state, body_indent, true)?;
 
     let (body, state) = if first_nl.value.is_empty() {
         let err_pos = state.pos();
@@ -3184,7 +3176,7 @@ where
     } else {
         // if no spaces are provided, parse them here
         let (_, first_spaces, state) =
-            eat_space_loc_comments(indent_problem, arena, state, min_indent, false)?;
+            eat_nc_loc_c(indent_problem, arena, state, min_indent, false)?;
         (first_spaces, state)
     };
 
@@ -3276,7 +3268,7 @@ fn parse_stmt_seq<'a, E: SpaceProblem + 'a>(
             item: stmt,
         });
 
-        match eat_space_loc_comments(indent_problem, arena, state.clone(), min_indent, false) {
+        match eat_nc_loc_c(indent_problem, arena, state.clone(), min_indent, false) {
             Ok((_, space, new_state)) => {
                 if space.value.is_empty() {
                     // require a newline or a terminator after the statement

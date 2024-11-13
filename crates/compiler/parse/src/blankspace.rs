@@ -202,7 +202,7 @@ where
     }
 }
 
-pub fn eat_space_loc_comments<'a, E>(
+pub fn eat_nc_loc_c<'a, E>(
     indent_problem: fn(Position) -> E,
     arena: &'a Bump,
     state: State<'a>,

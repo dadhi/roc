@@ -1,6 +1,7 @@
 use crate::{
     ast::Collection,
     blankspace::{eat_nc, SpacedBuilder},
+    expr::is_special_char,
     state::State,
 };
 use bumpalo::collections::vec::Vec;
@@ -834,9 +835,11 @@ where
 /// that should not be an identifier character
 /// to prevent treating `whence` or `iffy` as keywords
 pub fn at_keyword(kw: &'static str, state: &State<'_>) -> bool {
-    let bs = state.bytes();
-    matches!(bs.get(kw.len()),
-        None | Some(b' ' | b'#' | b'\n' | b'\r') if bs.starts_with(kw.as_bytes()))
+    let bytes = state.bytes();
+    match bytes.get(kw.len()) {
+        Some(b) => is_special_char(b) && bytes.starts_with(kw.as_bytes()),
+        None => bytes.starts_with(kw.as_bytes()),
+    }
 }
 
 // MACRO COMBINATORS

@@ -616,10 +616,7 @@ fn parse_stmt_start<'a>(
             b'e' => {
                 if at_keyword(keyword::EXPECT, &state) {
                     state.advance_mut(keyword::EXPECT.len());
-                    rest_of_expect_stmt(false, start, flags, comment_region, arena, state)
-                } else if at_keyword(keyword::EXPECT_FX, &state) {
-                    state.advance_mut(keyword::EXPECT_FX.len());
-                    rest_of_expect_stmt(true, start, flags, comment_region, arena, state)
+                    rest_of_expect_stmt(start, flags, comment_region, arena, state)
                 } else {
                     parse_stmt_operator_chain(flags, arena, state, min_indent)
                 }
@@ -2062,7 +2059,7 @@ pub fn merge_spaces<'a>(
 fn expr_to_pattern_help<'a>(arena: &'a Bump, expr: &Expr<'a>) -> Result<Pattern<'a>, ()> {
     let mut expr = expr.extract_spaces();
 
-    if let Expr::ParensAround(loc_expr) = &expr.item {
+    while let Expr::ParensAround(loc_expr) = &expr.item {
         let expr_inner = loc_expr.extract_spaces();
 
         expr.before = merge_spaces(arena, expr.before, expr_inner.before);
@@ -2150,7 +2147,6 @@ fn expr_to_pattern_help<'a>(arena: &'a Bump, expr: &Expr<'a>) -> Result<Pattern<
         | Expr::DbgStmt(_, _)
         | Expr::LowLevelDbg(_, _, _)
         | Expr::Return(_, _)
-        | Expr::MalformedClosure
         | Expr::MalformedSuffixed(..)
         | Expr::PrecedenceConflict { .. }
         | Expr::EmptyRecordBuilder(_)
@@ -2224,7 +2220,6 @@ fn assigned_expr_field_to_pattern_help<'a>(
             arena.alloc(assigned_expr_field_to_pattern_help(arena, nested)?),
             spaces,
         ),
-        AssignedField::Malformed(string) => Pattern::Malformed(string),
         AssignedField::IgnoredValue(_, _, _) => return Err(()),
     })
 }
@@ -2839,7 +2834,6 @@ mod when {
 }
 
 fn rest_of_expect_stmt<'a>(
-    is_fx: bool,
     start: Position,
     flags: ExprParseFlags,
     preceding_comment: Region,
@@ -2857,16 +2851,9 @@ fn rest_of_expect_stmt<'a>(
         None,
     ) {
         Ok((_, condition, state)) => {
-            let vd = if !is_fx {
-                ValueDef::Expect {
-                    condition: arena.alloc(condition),
-                    preceding_comment,
-                }
-            } else {
-                ValueDef::ExpectFx {
-                    condition: arena.alloc(condition),
-                    preceding_comment,
-                }
+            let vd = ValueDef::Expect {
+                condition: arena.alloc(condition),
+                preceding_comment,
             };
             let stmt = Loc::pos(start, state.pos(), Stmt::ValueDef(vd));
             Ok((MadeProgress, stmt, state))
@@ -4066,17 +4053,37 @@ const BINOP_CHAR_SET: &[u8] = b"+-/*=.<>:&|^?%!~";
 
 const BINOP_CHAR_MASK: u128 = {
     let mut result = 0u128;
-
     let mut i = 0;
     while i < BINOP_CHAR_SET.len() {
         let index = BINOP_CHAR_SET[i] as usize;
         result |= 1 << index;
-
         i += 1;
     }
-
     result
 };
+
+#[inline(always)]
+fn is_binop_char(ch: &u8) -> bool {
+    *ch < 127 && (BINOP_CHAR_MASK & (1 << *ch) != 0)
+}
+
+const SPECIAL_CHAR_SET: &[u8] = b" #\n\r\t,()[]{}\"'/\\+*%^&|<>=!~`;:?.";
+
+const SPECIAL_CHAR_MASK: u128 = {
+    let mut result = 0u128;
+    let mut i = 0;
+    while i < SPECIAL_CHAR_SET.len() {
+        let index = SPECIAL_CHAR_SET[i] as usize;
+        result |= 1 << index;
+        i += 1;
+    }
+    result
+};
+
+#[inline(always)]
+pub(crate) fn is_special_char(ch: &u8) -> bool {
+    *ch < 127 && (SPECIAL_CHAR_MASK & (1 << *ch) != 0)
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum OperatorOrDef {
@@ -4091,8 +4098,7 @@ fn parse_bin_op<'a>(state: State<'a>) -> ParseResult<'a, BinOp, EExpr<'a>> {
 
     let mut chomped = 0;
     for ch in bytes.iter() {
-        let index = *ch as usize;
-        if index > 127 || (BINOP_CHAR_MASK & (1 << index) == 0) {
+        if !is_binop_char(ch) {
             break;
         }
         chomped += 1;

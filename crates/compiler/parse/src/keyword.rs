@@ -8,7 +8,6 @@ pub const IS: &str = "is";
 pub const DBG: &str = "dbg";
 pub const IMPORT: &str = "import";
 pub const EXPECT: &str = "expect";
-pub const EXPECT_FX: &str = "expect-fx";
 pub const RETURN: &str = "return";
 pub const CRASH: &str = "crash";
 
@@ -22,12 +21,13 @@ pub const WHERE: &str = "where";
 // These keywords are valid in headers
 pub const PLATFORM: &str = "platform";
 
-pub const KEYWORDS: [&str; 12] = [
-    IF, THEN, ELSE, WHEN, AS, IS, DBG, IMPORT, EXPECT, EXPECT_FX, RETURN, CRASH,
+// List of keywords in expressions
+pub const KEYWORDS: [&str; 11] = [
+    IF, THEN, ELSE, WHEN, AS, IS, DBG, IMPORT, EXPECT, RETURN, CRASH,
 ];
 
 pub const KEYWORD_MIN_LEN: usize = IF.len();
-pub const KEYWORD_MAX_LEN: usize = EXPECT_FX.len();
+pub const KEYWORD_MAX_LEN: usize = EXPECT.len();
 
 // todo: @perf can we do better, fixed match table or the ideal hash map, benchmark it?
 #[inline(always)]

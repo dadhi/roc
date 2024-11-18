@@ -159,15 +159,11 @@ impl<'a> Buf<'a> {
         self.spaces_to_flush == 0 && self.text.is_empty()
     }
 
-    fn _get_real_indent_in_text(&mut self) -> Option<u16> {
-        // ensure that we have all spaces in place
-        self.flush_spaces();
-
+    fn get_real_indent_in_text(&mut self) -> u16 {
         let text = &self.text;
-
         let last_newline_pos = text.rfind('\n').unwrap_or(0);
-        let after_newline = &text[last_newline_pos..];
+        let after_newline = &text[last_newline_pos + 1..];
         let indent = after_newline.chars().take_while(|c| *c == ' ').count();
-        Some(indent as u16)
+        indent as u16
     }
 }

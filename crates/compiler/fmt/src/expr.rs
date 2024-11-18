@@ -274,7 +274,7 @@ impl<'a> Formattable for Expr<'a> {
                             })
                             .unwrap_or_default());
 
-                let arg_indent = if needs_indent {
+                let mut arg_indent = if needs_indent {
                     indent + INDENT
                 } else {
                     indent
@@ -293,6 +293,11 @@ impl<'a> Formattable for Expr<'a> {
                 if expr_needs_parens {
                     buf.indent(indent);
                     buf.push(')');
+                }
+
+                let real_indent = buf.get_real_indent_in_text();
+                if real_indent < arg_indent && real_indent + INDENT < arg_indent {
+                    arg_indent = real_indent + INDENT
                 }
 
                 for loc_arg in loc_args.iter() {

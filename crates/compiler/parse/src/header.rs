@@ -779,10 +779,11 @@ where
     E: 'a + SpaceProblem,
 {
     move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-        let (before, state) = match eat_nc_check(indent_problem1, arena, state, min_indent, false) {
-            Ok((_, sp, state)) => (sp, state),
-            Err((_, fail)) => return Err((NoProgress, fail)),
-        };
+        let (_, before, state) =
+            match eat_nc_check(indent_problem1, arena, state, min_indent, false) {
+                Ok(ok) => ok,
+                Err((_, fail)) => return Err((NoProgress, fail)),
+            };
 
         if !at_keyword(K::KEYWORD, &state) {
             return Err((NoProgress, expectation(state.pos())));

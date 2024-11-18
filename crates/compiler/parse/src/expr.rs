@@ -142,8 +142,8 @@ fn rest_of_expr_in_parens_etc<'a>(
         )
     };
 
-    let (field_accesses, state) = match parse_field_task_result_suffixes(arena, state) {
-        Ok((_, out, state)) => (out, state),
+    let (_, field_accesses, state) = match parse_field_task_result_suffixes(arena, state) {
+        Ok(ok) => ok,
         Err((_, e)) => return Err((MadeProgress, e)),
     };
 
@@ -378,7 +378,7 @@ fn parse_term<'a>(
                     return Ok((MadeProgress, dbg_expr, state));
                 }
 
-                // todo: @ask why "try" is not included into KEYWORDS in keyword.rs
+                // todo: @later "try" is not included into KEYWORDS in keyword.rs because there still functions with the such name
                 if at_keyword("try", &state) {
                     let state = state.advance("try".len());
                     let try_expr = Loc::pos(start, state.pos(), Expr::Try);
@@ -427,9 +427,9 @@ pub(crate) fn parse_expr_start<'a>(
 
     // Parse a chain of expressions separated by operators. Also handles function application.
     let mut prev_state = state.clone();
-    let (spaces_before_op, state) =
+    let (_, spaces_before_op, state) =
         match eat_nc_check(EExpr::IndentEnd, arena, state.clone(), min_indent, false) {
-            Ok((_, sp, state)) => (sp, state),
+            Ok(ok) => ok,
             Err(_) => {
                 let loc_term = Loc::pos(start, state.pos(), term.value);
                 return Ok((MadeProgress, loc_term, state));
@@ -467,7 +467,6 @@ pub(crate) fn parse_expr_start<'a>(
                 match eat_nc_check(EExpr::IndentEnd, arena, state.clone(), min_indent, false) {
                     Err(_) => {
                         expr_state.spaces_after = &[];
-
                         let expr = finalize_expr(expr_state, arena);
                         let expr = Loc::pos(start, state.pos(), expr);
                         return Ok((MadeProgress, expr, state));

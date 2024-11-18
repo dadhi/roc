@@ -5251,18 +5251,18 @@ mod test_fmt {
         );
     }
 
-    #[test] // todo: @wip @fixme double indent for the withModel lambda argument
+    #[test]
     fn _pipeline_apply_lambda_multiline_with_closure_shortcuts() {
         expr_formats_same(indoc!(
             r"
                     example = \|> withModel
-                            (\~
-                                Err _ ->
-                                    Err {}
+                        (\~
+                            Err _ ->
+                                Err {}
 
-                                Ok val ->
-                                    Ok {}
-                            )
+                            Ok val ->
+                                Ok {}
+                        )
                     example
                 "
         ));
@@ -5274,13 +5274,13 @@ mod test_fmt {
             indoc!(
                 r"
                     example = \ |> withModel
-                            (\ ~
-                                Err _ ->
-                                    Err {}
+                        (\ ~
+                            Err _ ->
+                                Err {}
 
-                                Ok val ->
-                                    Ok {}
-                            )
+                            Ok val ->
+                                Ok {}
+                        )
                     example
                 "
             ),

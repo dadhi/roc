@@ -114,8 +114,9 @@ fn rest_of_expr_in_parens_etc<'a>(
             Err((p, fail)) => return Err((p, EInParens::Expr(a.alloc(fail), block_pos))),
         }
     };
-    let (elems, state) = match collection_inner(elem_p, Expr::SpaceBefore).parse(arena, state, 0) {
-        Ok((_, out, state)) => (out, state),
+    let (_, elems, state) = match collection_inner(elem_p, Expr::SpaceBefore).parse(arena, state, 0)
+    {
+        Ok(ok) => ok,
         Err((p, fail)) => return Err((p, EExpr::InParens(fail, start))),
     };
 
@@ -3663,19 +3664,17 @@ fn rest_of_list_expr<'a>(
     arena: &'a Bump,
     state: State<'a>,
 ) -> ParseResult<'a, Loc<Expr<'a>>, EExpr<'a>> {
-    let inner = collection_inner(
-        move |a, state: State<'a>, min_indent: u32| {
-            let expr_pos = state.pos();
-            match parse_expr_start(CHECK_FOR_ARROW, None, a, state, min_indent) {
-                Ok(ok) => Ok(ok),
-                Err((p, fail)) => Err((p, EList::Expr(a.alloc(fail), expr_pos))),
-            }
-        },
-        Expr::SpaceBefore,
-    );
+    let elem_p = move |a, state: State<'a>, min_indent: u32| {
+        let expr_pos = state.pos();
+        match parse_expr_start(CHECK_FOR_ARROW, None, a, state, min_indent) {
+            Ok(ok) => Ok(ok),
+            Err((p, fail)) => Err((p, EList::Expr(a.alloc(fail), expr_pos))),
+        }
+    };
 
-    let (elems, state) = match inner.parse(arena, state, 0) {
-        Ok((_, elems, state)) => (elems, state),
+    let (_, elems, state) = match collection_inner(elem_p, Expr::SpaceBefore).parse(arena, state, 0)
+    {
+        Ok(ok) => ok,
         Err((_, fail)) => return Err((MadeProgress, EExpr::List(fail, start))),
     };
 

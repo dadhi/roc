@@ -2069,7 +2069,6 @@ fn expr_to_pattern<'a>(arena: &'a Bump, expr: &Expr<'a>) -> Result<Pattern<'a>, 
         | Expr::Defs(_, _)
         | Expr::If { .. }
         | Expr::When(..)
-        | Expr::Expect(_, _)
         | Expr::Dbg
         | Expr::DbgStmt(_, _)
         | Expr::LowLevelDbg(_, _, _)

@@ -2,7 +2,7 @@ use crate::ast::{
     AbilityImpls, AssignedField, Expr, FunctionArrow, ImplementsAbilities, ImplementsAbility,
     ImplementsClause, Pattern, Spaceable, Spaced, Tag, TypeAnnotation, TypeHeader,
 };
-use crate::blankspace::{eat_nc_check, SpacedBuilder};
+use crate::blankspace::{eat_nc_check, eat_nc_ok, SpacedBuilder};
 use crate::expr::parse_record_field;
 use crate::ident::{
     chomp_concrete_type, chomp_lowercase_part, chomp_uppercase_part, parse_lowercase_ident,
@@ -506,11 +506,7 @@ fn parse_implements_clause<'a>(
     let mut last_ability_at = Region::new(first_pos, state.pos());
     let mut first_ability = Loc::at(last_ability_at, first_ability);
 
-    let (spaces_after, state) =
-        match eat_nc_check(EType::TIndentEnd, arena, state.clone(), min_indent, false) {
-            Ok((_, sp, state)) => (sp, state),
-            Err(_) => (&[] as &[_], state),
-        };
+    let (spaces_after, state) = eat_nc_ok(EType::TIndentEnd, arena, state, min_indent);
 
     first_ability = first_ability.spaced_around(arena, spaces_before, spaces_after);
 
@@ -536,11 +532,7 @@ fn parse_implements_clause<'a>(
         last_ability_at = Region::new(ability_pos, news.pos());
         let mut ability = Loc::at(last_ability_at, ability);
 
-        let (spaces_after, news) =
-            match eat_nc_check(EType::TIndentEnd, arena, news.clone(), min_indent, false) {
-                Ok((_, sp, state)) => (sp, state),
-                Err(_) => (&[] as &[_], news),
-            };
+        let (spaces_after, news) = eat_nc_ok(EType::TIndentEnd, arena, news, min_indent);
 
         ability = ability.spaced_around(arena, spaces_before, spaces_after);
         abilities.push(ability);

@@ -379,12 +379,6 @@ pub fn rest_of_str_like<'a>(
                         }
                         let new_state = new_state.inc();
 
-                        // let (_, loc_digits, new_state) = skip_first(
-                        //     byte(b'(', EString::CodePtOpen),
-                        //     skip_second(loc(ascii_hex_digits()), byte(b')', EString::CodePtEnd)),
-                        // )
-                        // .parse(arena, state, min_indent)?;
-
                         // Advance the iterator past the expr we just parsed.
                         for _ in 0..(original_byte_count - new_state.bytes().len()) {
                             bytes.next();
@@ -440,14 +434,11 @@ pub fn rest_of_str_like<'a>(
                     match std::str::from_utf8(string_bytes) {
                         Ok(string) => {
                             state.advance_mut(string.len());
-
                             segments.push(StrSegment::Plaintext(string));
                         }
                         Err(_) => {
-                            return Err((
-                                MadeProgress,
-                                EString::Space(BadInputError::BadUtf8, state.pos()),
-                            ));
+                            let fail = EString::Space(BadInputError::BadUtf8, state.pos());
+                            return Err((MadeProgress, fail));
                         }
                     }
                 }
@@ -459,8 +450,8 @@ pub fn rest_of_str_like<'a>(
 
                 // Parse an arbitrary expression, followed by ')'
                 let expr_pos = state.pos();
-                let ((spaces_before, _), news) = match eat_nc(arena, state, false) {
-                    Ok((_, out, state)) => (out, state),
+                let (_, (spaces_before, _), news) = match eat_nc(arena, state, false) {
+                    Ok(ok) => ok,
                     Err((p, fail)) => {
                         return Err((p, EString::Format(arena.alloc(fail), expr_pos)));
                     }
@@ -473,20 +464,19 @@ pub fn rest_of_str_like<'a>(
                     news,
                     0,
                 ) {
-                    Ok((_, expr, state)) => (expr, state),
+                    Ok(ok) => ok,
                     Err((p, fail)) => {
                         return Err((p, EString::Format(arena.alloc(fail), expr_pos)));
                     }
                 };
 
                 let expr = expr.spaced_before(arena, spaces_before);
-                let expr = &*arena.alloc(expr.value);
-                let expr = Loc::pos(expr_pos, news.pos(), expr);
+                let expr = news.loc(expr_pos, &*arena.alloc(expr.value));
 
                 if news.bytes().first() != Some(&b')') {
                     return Err((MadeProgress, EString::FormatEnd(news.pos())));
                 }
-                news.advance_mut(1);
+                news.inc_mut();
 
                 // Advance the iterator past the expr we just parsed.
                 for _ in 0..(original_byte_count - news.bytes().len()) {

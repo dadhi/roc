@@ -184,11 +184,11 @@ where
     E: 'a + SpaceProblem,
 {
     let start = state.pos();
-    let (p, (sp, _), state) = eat_nc(arena, state, err_made_progress)?;
+    let (ok_pr, (sp, _), state) = eat_nc(arena, state, err_made_progress)?;
     if !sp.is_empty() && state.column() < min_indent {
-        return Err((p, indent_problem(start)));
+        return Err((ok_pr, indent_problem(start)));
     }
-    Ok((p, sp, state))
+    Ok((ok_pr, sp, state))
 }
 
 pub fn space0_e<'a, E>(
@@ -208,16 +208,16 @@ pub fn eat_nc_loc_c<'a, E>(
     state: State<'a>,
     min_indent: u32,
     err_made_progress: bool,
-) -> ParseResult<'a, Loc<&'a [CommentOrNewline<'a>]>, E>
+) -> Result<(Loc<&'a [CommentOrNewline<'a>]>, State<'a>), (Progress, E)>
 where
     E: 'a + SpaceProblem,
 {
     let start = state.pos();
-    let (p, (sp, comments_at), state) = eat_nc(arena, state, err_made_progress)?;
+    let (ok_pr, (sp, comments_at), state) = eat_nc(arena, state, err_made_progress)?;
     if !sp.is_empty() && state.column() < min_indent {
-        return Err((p, indent_problem(start)));
+        return Err((ok_pr, indent_problem(start)));
     }
-    Ok((p, Loc::at(comments_at, sp), state))
+    Ok((Loc::at(comments_at, sp), state))
 }
 
 fn begins_with_crlf(bytes: &[u8]) -> bool {
@@ -248,15 +248,15 @@ where
         let start = state.pos();
         match state.bytes().first() {
             Some(b'#') => {
-                state.advance_mut(1);
+                state.inc_mut();
 
                 let is_doc_comment =
                     state.bytes().first() == Some(&b'#') && state.bytes().get(1) != Some(&b'#');
 
                 if is_doc_comment {
-                    state.advance_mut(1);
+                    state.inc_mut();
                     if state.bytes().first() == Some(&b' ') {
-                        state.advance_mut(1);
+                        state.inc_mut();
                     }
                 }
 
@@ -329,6 +329,22 @@ where
 
     let comments_at = comments_at.unwrap_or(Region::point(state.pos()));
     Ok((p, (nc.into_bump_slice(), comments_at), state))
+}
+
+#[inline(always)]
+pub fn eat_nc_ok<'a, E>(
+    indent_problem: fn(Position) -> E,
+    arena: &'a Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> (&'a [CommentOrNewline<'a>], State<'a>)
+where
+    E: 'a + SpaceProblem,
+{
+    match eat_nc_check(indent_problem, arena, state.clone(), min_indent, false) {
+        Ok((_, out, state)) => (out, state),
+        Err(_) => (&[] as &[_], state),
+    }
 }
 
 // note: @dup similar to `eat_nc` but without errors and progress

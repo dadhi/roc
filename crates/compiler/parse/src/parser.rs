@@ -927,8 +927,8 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
     move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
         let (_, (first_spaces, _), state) = eat_nc(arena, state, true)?;
 
-        let (mut first_item, state) = match elem_p.parse(arena, state.clone(), min_indent) {
-            Ok((_, out, state)) => (out, state),
+        let (_, first_item, state) = match elem_p.parse(arena, state.clone(), min_indent) {
+            Ok(ok) => ok,
             Err((NoProgress, _)) => {
                 let empty = Collection::with_items_and_comments(arena, &[], first_spaces);
                 return Ok((MadeProgress, empty, state));
@@ -937,7 +937,7 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
         };
 
         let (_, (spaces_after, _), state) = eat_nc(arena, state, true)?;
-        first_item = first_item.spaced_after(arena, spaces_after);
+        let mut first_item = first_item.spaced_after(arena, spaces_after);
 
         if !first_spaces.is_empty() {
             let spaced_val = space_before(arena.alloc(first_item.value), first_spaces);
@@ -955,8 +955,8 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
             state.advance_mut(1);
             match eat_nc::<'a, E>(arena, state.clone(), false) {
                 Ok((_, (spb, _), news)) => {
-                    let (elem, news) = match elem_p.parse(arena, news, min_indent) {
-                        Ok((_, elem, news)) => (elem, news),
+                    let (_, elem, news) = match elem_p.parse(arena, news, min_indent) {
+                        Ok(ok) => ok,
                         Err(_) => break,
                     };
                     let (item, news) = match eat_nc::<'a, E>(arena, news.clone(), false) {

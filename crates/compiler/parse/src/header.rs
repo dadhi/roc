@@ -553,13 +553,13 @@ fn provides_to_package<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, To<'a>, EProvides<'a>> {
+) -> Result<(To<'a>, State<'a>), (Progress, EProvides<'a>)> {
     let pos = state.pos();
     match parse_lowercase_ident(state.clone()) {
-        Ok((p, out, state)) => Ok((p, To::ExistingPackage(out), state)),
+        Ok((_, out, state)) => Ok((To::ExistingPackage(out), state)),
         Err((MadeProgress, _)) => Err((MadeProgress, EProvides::Identifier(pos))),
         Err(_) => match package_name().parse(arena, state, min_indent) {
-            Ok((p, out, state)) => Ok((p, To::NewPackage(out), state)),
+            Ok((_, out, state)) => Ok((To::NewPackage(out), state)),
             Err((p, fail)) => Err((p, EProvides::Package(fail, pos))),
         },
     }
@@ -597,8 +597,8 @@ fn provides_to<'a>() -> impl Parser<'a, ProvidesTo<'a>, EProvides<'a>> {
         .parse(arena, state, min_indent)?;
 
         let to_pos = state.pos();
-        let (_, to, state) = provides_to_package(arena, state, min_indent)?;
-        let to = Loc::pos(to_pos, state.pos(), to);
+        let (to, state) = provides_to_package(arena, state, min_indent)?;
+        let to = state.loc(to_pos, to);
 
         let provides_to = ProvidesTo {
             provides_keyword,

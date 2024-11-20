@@ -1197,7 +1197,7 @@ fn markdown_to_html(
                 arena.reset();
 
                 match parse_ident_chain(&arena, state) {
-                    Ok((_, Ident::Plain(ident), _)) => {
+                    Ok((Ident::Plain(ident), _)) => {
                         match doc_url(all_exposed_symbols, scope, interns, "", ident) {
                             Ok(DocUrl { url, title }) => Some((url.into(), title.into())),
                             Err((link_md, problem)) => {
@@ -1207,7 +1207,6 @@ fn markdown_to_html(
                         }
                     }
                     Ok((
-                        _,
                         Ident::Access {
                             module_name,
                             parts: [Accessor::RecordField(ident)],
@@ -1220,7 +1219,7 @@ fn markdown_to_html(
                             None
                         }
                     },
-                    Ok((_, Ident::Tag(type_name), _)) => {
+                    Ok((Ident::Tag(type_name), _)) => {
                         // This looks like a tag name, but it could
                         // be a type alias that's in scope, e.g. [I64]
                         match doc_url(all_exposed_symbols, scope, interns, "", type_name) {

@@ -65,6 +65,13 @@ impl<'a> State<'a> {
 
     #[must_use]
     #[inline(always)]
+    pub(crate) const fn inc_len(mut self, str: &str) -> State<'a> {
+        self.offset += str.len();
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
     pub(crate) const fn inc(mut self) -> State<'a> {
         self.offset += 1;
         self

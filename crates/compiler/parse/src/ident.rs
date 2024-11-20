@@ -60,18 +60,17 @@ pub enum Ident<'a> {
 ///
 /// * A record field, e.g. "email" in `.email` or in `email:`
 /// * A named pattern match, e.g. "foo" in `foo =` or `foo ->` or `\foo ->`
-// todo: @wip remove Ok MadeProgress
 #[inline(always)]
-pub fn parse_lowercase_ident(state: State<'_>) -> ParseResult<'_, &str, ()> {
+pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Progress> {
     match chomp_lowercase_part(state.bytes()) {
-        Err(p) => Err((p, ())),
         Ok((ident, may_be_kw)) => {
             if may_be_kw && is_keyword(ident) {
-                Err((NoProgress, ()))
+                Err(NoProgress)
             } else {
-                Ok((MadeProgress, ident, state.advance(ident.len())))
+                Ok((ident, state.advance(ident.len())))
             }
         }
+        Err(p) => Err(p),
     }
 }
 

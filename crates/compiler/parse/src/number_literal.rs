@@ -31,7 +31,7 @@ fn chomp_number_base<'a>(
     bytes: &'a [u8],
     state: State<'a>,
 ) -> ParseResult<'a, NumLiteral<'a>, ENumber> {
-    let (_is_float, chomped) = chomp_number(bytes);
+    let (_, chomped) = chomp_number(bytes);
 
     let string = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
 

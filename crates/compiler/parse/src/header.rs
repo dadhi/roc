@@ -28,7 +28,7 @@ pub fn parse_module_defs<'a>(
     defs: Defs<'a>,
 ) -> Result<Defs<'a>, SyntaxError<'a>> {
     match crate::expr::parse_top_level_defs(arena, state.clone(), defs) {
-        Ok((_, defs, state)) => {
+        Ok((defs, state)) => {
             if state.has_reached_end() {
                 Ok(defs)
             } else {
@@ -556,8 +556,8 @@ fn provides_to_package<'a>(
 ) -> Result<(To<'a>, State<'a>), (Progress, EProvides<'a>)> {
     let pos = state.pos();
     match parse_lowercase_ident(state.clone()) {
-        Ok((_, out, state)) => Ok((To::ExistingPackage(out), state)),
-        Err((MadeProgress, _)) => Err((MadeProgress, EProvides::Identifier(pos))),
+        Ok((out, state)) => Ok((To::ExistingPackage(out), state)),
+        Err(MadeProgress) => Err((MadeProgress, EProvides::Identifier(pos))),
         Err(_) => match package_name().parse(arena, state, min_indent) {
             Ok((_, out, state)) => Ok((To::NewPackage(out), state)),
             Err((p, fail)) => Err((p, EProvides::Package(fail, pos))),
@@ -900,8 +900,8 @@ pub fn typed_ident<'a>() -> impl Parser<'a, Spaced<'a, TypedIdent<'a>>, ETypedId
         let start = state.pos();
 
         let (ident, state) = match parse_lowercase_ident(state) {
-            Ok((_, out, state)) => (Loc::pos(start, state.pos(), out), state),
-            Err((p, _)) => return Err((p, ETypedIdent::Identifier(start))),
+            Ok((out, state)) => (state.loc(start, out), state),
+            Err(p) => return Err((p, ETypedIdent::Identifier(start))),
         };
 
         let (_, spaces_before_colon, state) =
@@ -934,7 +934,7 @@ fn imports_entry<'a>() -> impl Parser<'a, Spaced<'a, ImportsEntry<'a>>, EImports
     move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
         let p_name_module_name = move |_: &'a bumpalo::Bump, state: State<'a>, _: u32| {
             let (name, state) = match parse_lowercase_ident(state.clone()) {
-                Ok((_, name, state)) => {
+                Ok((name, state)) => {
                     if state.bytes().first() == Some(&b'.') {
                         (Some(name), state.inc())
                     } else {
@@ -1420,9 +1420,9 @@ pub fn package_entry<'a>() -> impl Parser<'a, Spaced<'a, PackageEntry<'a>>, EPac
     move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
         let shorthand_p = move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
             let ident_pos = state.pos();
-            let (_, ident, state) = match parse_lowercase_ident(state.clone()) {
+            let (ident, state) = match parse_lowercase_ident(state.clone()) {
                 Ok(ok) => ok,
-                Err((NoProgress, _)) => return Ok((NoProgress, None, state)),
+                Err(NoProgress) => return Ok((NoProgress, None, state)),
                 Err(_) => return Err((MadeProgress, EPackageEntry::Shorthand(ident_pos))),
             };
 

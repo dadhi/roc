@@ -25,10 +25,7 @@ fn rest_of_tag_union_type<'a>(
     min_indent: u32,
 ) -> ParseResult<'a, TypeAnnotation<'a>, ETypeTagUnion<'a>> {
     let (_, tags, state) =
-        match collection_inner(parse_tag_type, Tag::SpaceBefore).parse(arena, state, 0) {
-            Ok(ok) => ok,
-            Err((_, fail)) => return Err((MadeProgress, fail)),
-        };
+        collection_inner(parse_tag_type, Tag::SpaceBefore).parse(arena, state, 0)?;
 
     if state.bytes().first() != Some(&b']') {
         return Err((MadeProgress, ETypeTagUnion::End(state.pos())));
@@ -218,11 +215,8 @@ fn rest_of_type_in_parens<'a>(
             Err((p, fail)) => Err((p, ETypeInParens::Type(a.alloc(fail), type_pos))),
         }
     };
-    let (fields, state) =
-        match collection_inner(elem_p, TypeAnnotation::SpaceBefore).parse(arena, state, 0) {
-            Ok((_, out, state)) => (out, state),
-            Err((_, fail)) => return Err((MadeProgress, fail)),
-        };
+    let (_, fields, state) =
+        collection_inner(elem_p, TypeAnnotation::SpaceBefore).parse(arena, state, 0)?;
 
     if state.bytes().first() != Some(&b')') {
         return Err((MadeProgress, ETypeInParens::End(state.pos())));
@@ -381,12 +375,8 @@ fn rest_of_record_type<'a>(
     state: State<'a>,
     min_indent: u32,
 ) -> ParseResult<'a, TypeAnnotation<'a>, ETypeRecord<'a>> {
-    let (_, fields, state) = match collection_inner(record_type_field, AssignedField::SpaceBefore)
-        .parse(arena, state, 0)
-    {
-        Ok(ok) => ok,
-        Err((_, fail)) => return Err((MadeProgress, fail)),
-    };
+    let (_, fields, state) =
+        collection_inner(record_type_field, AssignedField::SpaceBefore).parse(arena, state, 0)?;
 
     if state.bytes().first() != Some(&b'}') {
         return Err((MadeProgress, ETypeRecord::End(state.pos())));
@@ -555,7 +545,7 @@ pub fn parse_implements_abilities<'a>(
     if !state.bytes().starts_with(keyword::IMPLEMENTS.as_bytes()) {
         return Err((NoProgress, EType::TImplementsClause(state.pos())));
     }
-    let state = state.advance(keyword::IMPLEMENTS.len());
+    let state = state.inc_len(keyword::IMPLEMENTS);
 
     let inc_indent = min_indent + 1;
     let (_, spaces_after_impl, state) =
@@ -568,12 +558,8 @@ pub fn parse_implements_abilities<'a>(
     let state = state.inc();
 
     let (_, abilities, state) =
-        match collection_inner(parse_implements_ability, ImplementsAbility::SpaceBefore)
-            .parse(arena, state, 0)
-        {
-            Ok(ok) => ok,
-            Err((_, fail)) => return Err((MadeProgress, fail)),
-        };
+        collection_inner(parse_implements_ability, ImplementsAbility::SpaceBefore)
+            .parse(arena, state, 0)?;
 
     if state.bytes().first() != Some(&b']') {
         return Err((MadeProgress, EType::TEnd(state.pos())));

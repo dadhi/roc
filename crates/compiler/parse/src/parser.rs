@@ -920,6 +920,7 @@ where
     }
 }
 
+// It is always returns Err with MadeProgress, because it the inner parser between the opening and closing symbols.
 pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a + SpaceProblem>(
     elem_p: impl Parser<'a, Loc<Elem>, E> + 'a,
     space_before: impl Fn(&'a Elem, &'a [crate::ast::CommentOrNewline<'a>]) -> Elem,
@@ -1139,10 +1140,7 @@ where
     debug_assert_ne!(byte_to_match, b'\n');
 
     move |_arena: &'a Bump, state: State<'a>, _min_indent: u32| match state.bytes().first() {
-        Some(x) if *x == byte_to_match => {
-            let state = state.advance(1);
-            Ok((MadeProgress, (), state))
-        }
+        Some(x) if *x == byte_to_match => Ok((MadeProgress, (), state.inc())),
         _ => Err((NoProgress, to_error(state.pos()))),
     }
 }

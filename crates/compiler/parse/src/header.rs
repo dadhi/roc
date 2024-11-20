@@ -10,9 +10,9 @@ use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseId
 use crate::parser::Progress::{self, *};
 use crate::parser::{
     at_keyword, byte, collection_inner, collection_trailing_sep_e, loc, reset_min_indent,
-    skip_first, skip_second, specialize_err, succeed, zero_or_more, EExposes, EHeader, EImports,
-    EPackageEntry, EPackageName, EPackages, EParams, EProvides, ERequires, ETypedIdent,
-    ParseResult, Parser, SourceError, SpaceProblem, SyntaxError,
+    skip_first, skip_second, specialize_err, succeed, EExposes, EHeader, EImports, EPackageEntry,
+    EPackageName, EPackages, EParams, EProvides, ERequires, ETypedIdent, ParseResult, Parser,
+    SourceError, SpaceProblem, SyntaxError,
 };
 use crate::pattern::parse_record_pattern_fields;
 use crate::state::State;
@@ -126,8 +126,8 @@ fn parse_module_header<'a>(
     };
 
     let exposes_pos = state.pos();
-    let (exposes, state) = match exposes_list().parse(arena, state, min_indent) {
-        Ok((_, out, state)) => (out, state),
+    let (_, exposes, state) = match exposes_list().parse(arena, state, min_indent) {
+        Ok(ok) => ok,
         Err((p, fail)) => return Err((p, EHeader::Exposes(fail, exposes_pos))),
     };
 
@@ -148,7 +148,7 @@ fn parse_module_params<'a>(
     let start = state.pos();
 
     let (pattern, state) = match parse_record_pattern_fields(arena, state) {
-        Ok((_, fields, state)) => (Loc::pos(start, state.pos(), fields), state),
+        Ok((_, fields, state)) => (state.loc(start, fields), state),
         Err((p, fail)) => {
             return Err((p, EParams::Pattern(fail, start)));
         }
@@ -635,34 +635,38 @@ fn provides_exposed<'a>() -> impl Parser<
 
 fn provides_types<'a>(
 ) -> impl Parser<'a, Collection<'a, Loc<Spaced<'a, UppercaseIdent<'a>>>>, EProvides<'a>> {
-    let elem_p = move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-        let start = state.pos();
-        match ident::uppercase().parse(arena, state, min_indent) {
-            Ok(ok) => Ok(ok),
-            Err((p, _)) => Err((p, EProvides::Identifier(start))),
-        }
-    };
-
-    skip_first(
+    move |arena: &'a bumpalo::Bump, mut state: State<'a>, _: u32| {
         // We only support spaces here, not newlines, because this is not intended
         // to be the design forever. Someday it will hopefully work like Elm,
         // where platform authors can provide functions like Browser.sandbox which
         // present an API based on ordinary-looking type variables.
-        zero_or_more(byte(
-            b' ',
-            // HACK: If this errors, EProvides::Provides is not an accurate reflection
-            // of what went wrong. However, this is both skipped and zero_or_more,
-            // so this error should never be visible to anyone in practice!
-            EProvides::Provides,
-        )),
-        skip_first(
-            byte(b'{', EProvides::ListStart),
-            skip_second(
-                reset_min_indent(collection_inner(elem_p, Spaced::SpaceBefore)),
-                byte(b'}', EProvides::ListEnd),
-            ),
-        ),
-    )
+        let mut p = NoProgress;
+        while state.bytes().first() == Some(&b' ') {
+            state.inc_mut();
+            p = MadeProgress;
+        }
+
+        let elem_p = move |_, state: State<'a>, _: u32| {
+            let start = state.pos();
+            match ident::uppercase(state) {
+                Ok(ok) => Ok(ok),
+                Err((p, _)) => Err((p, EProvides::Identifier(start))),
+            }
+        };
+
+        if state.bytes().first() != Some(&b'{') {
+            return Err((p, EProvides::ListStart(state.pos())));
+        }
+        state.inc_mut();
+
+        let (_, idents, state) =
+            collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0)?;
+
+        if state.bytes().first() != Some(&b'}') {
+            return Err((MadeProgress, EProvides::ListEnd(state.pos())));
+        }
+        Ok((MadeProgress, idents, state.inc()))
+    }
 }
 
 fn exposes_entry<'a, F, E>(
@@ -702,21 +706,31 @@ fn requires<'a>(
 
 #[inline(always)]
 fn platform_requires<'a>() -> impl Parser<'a, PlatformRequires<'a>, ERequires<'a>> {
-    record!(PlatformRequires {
-        rigids: skip_second(requires_rigids(), space0_e(ERequires::ListStart)),
-        signatures: requires_typed_ident()
-    })
-}
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        if state.bytes().first() != Some(&b'{') {
+            return Err((NoProgress, ERequires::ListStart(state.pos())));
+        }
+        let state = state.inc();
 
-#[inline(always)]
-fn requires_rigids<'a>(
-) -> impl Parser<'a, Collection<'a, Loc<Spaced<'a, UppercaseIdent<'a>>>>, ERequires<'a>> {
-    collection_trailing_sep_e(
-        byte(b'{', ERequires::ListStart),
-        specialize_err(|_, pos| ERequires::Rigid(pos), ident::uppercase()),
-        byte(b'}', ERequires::ListEnd),
-        Spaced::SpaceBefore,
-    )
+        let elem_p = move |_, state: State<'a>, _: u32| {
+            let start = state.pos();
+            ident::uppercase(state).map_err(|(p, _)| (p, ERequires::Rigid(start)))
+        };
+        let (_, rigids, state) =
+            collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0)?;
+
+        if state.bytes().first() != Some(&b'}') {
+            return Err((MadeProgress, ERequires::ListEnd(state.pos())));
+        }
+        let state = state.inc();
+
+        let (_, _, state) = eat_nc_check(ERequires::ListStart, arena, state, min_indent, true)?;
+
+        let (_, signatures, state) = requires_typed_ident().parse(arena, state, min_indent)?;
+
+        let req = PlatformRequires { rigids, signatures };
+        Ok((MadeProgress, req, state))
+    }
 }
 
 #[inline(always)]
@@ -752,13 +766,9 @@ fn exposes_list<'a>() -> impl Parser<'a, Collection<'a, Loc<Spaced<'a, ExposedNa
         }
         let state = state.inc();
 
-        let (entries, state) =
-            match collection_inner(exposes_entry(EExposes::Identifier), Spaced::SpaceBefore)
-                .parse(arena, state, 0)
-            {
-                Ok((_, out, state)) => (out, state),
-                Err((_, fail)) => return Err((MadeProgress, fail)),
-            };
+        let (_, entries, state) =
+            collection_inner(exposes_entry(EExposes::Identifier), Spaced::SpaceBefore)
+                .parse(arena, state, 0)?;
 
         if state.bytes().first() != Some(&b']') {
             return Err((MadeProgress, EExposes::ListEnd(state.pos())));
@@ -965,16 +975,12 @@ fn imports_entry<'a>() -> impl Parser<'a, Spaced<'a, ImportsEntry<'a>>, EImports
 
             let elem_p = exposes_entry(EImports::Identifier);
             let (_, opt_values, state) =
-                match collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0) {
-                    Ok(ok) => ok,
-                    Err((_, fail)) => return Err((MadeProgress, fail)),
-                };
+                collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0)?;
 
             if state.bytes().first() != Some(&b'}') {
                 return Err((MadeProgress, EImports::SetEnd(state.pos())));
             }
-            let state = state.inc();
-            Ok((MadeProgress, opt_values, state))
+            Ok((MadeProgress, opt_values, state.inc()))
         };
 
         match p_name_module_name.parse(arena, state.clone(), min_indent) {

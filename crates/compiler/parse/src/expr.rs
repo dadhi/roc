@@ -107,7 +107,7 @@ fn rest_of_expr_in_parens_etc<'a>(
 
     let (_, elems, state) = collection_inner(elem_p, Expr::SpaceBefore)
         .parse(arena, state, 0)
-        .map_err(|(p, fail)| (p, EExpr::InParens(fail, start)))?;
+        .map_err(|(_, fail)| (MadeProgress, EExpr::InParens(fail, start)))?;
 
     if state.bytes().first() != Some(&b')') {
         let fail = EInParens::End(state.pos());
@@ -1054,16 +1054,13 @@ fn import_exposing<'a>() -> impl Parser<
             match parse_anycase_ident(state) {
                 Ok((p, ident, state)) => {
                     let ident = Spaced::Item(crate::header::ExposedName::new(ident));
-                    Ok((p, Loc::pos(pos, state.pos(), ident), state))
+                    Ok((p, state.loc(pos, ident), state))
                 }
                 Err((p, _)) => Err((p, EImport::ExposedName(pos))),
             }
         };
-        let (item, state) =
-            match collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0) {
-                Ok((_, out, state)) => (out, state),
-                Err((_, fail)) => return Err((MadeProgress, fail)),
-            };
+        let (_, item, state) =
+            collection_inner(elem_p, Spaced::SpaceBefore).parse(arena, state, 0)?;
 
         if state.bytes().first() != Some(&b']') {
             return Err((MadeProgress, EImport::ExposingListEnd(state.pos())));
@@ -3808,10 +3805,7 @@ fn rest_of_record<'a>(
     };
 
     let (_, fields, state) =
-        match collection_inner(elem_p, RecordField::SpaceBefore).parse(arena, state, 0) {
-            Ok(ok) => ok,
-            Err((_, fail)) => return Err((MadeProgress, fail)),
-        };
+        collection_inner(elem_p, RecordField::SpaceBefore).parse(arena, state, 0)?;
 
     if state.bytes().first() != Some(&b'}') {
         return Err((MadeProgress, ERecord::End(state.pos())));

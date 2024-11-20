@@ -140,7 +140,7 @@ fn parse_pattern_as<'a>(
     if !at_keyword(keyword::AS, &state) {
         return Err((NoProgress, EPattern::AsKeyword(state.pos())));
     }
-    let state = state.advance(keyword::AS.len());
+    let state = state.inc_len(keyword::AS);
 
     let (_, spaces_before, state) =
         eat_nc_check(EPattern::AsIdentifier, arena, state, min_indent, false)?;

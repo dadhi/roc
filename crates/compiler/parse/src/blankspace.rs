@@ -186,7 +186,12 @@ where
     let start = state.pos();
     let (ok_pr, (sp, _), state) = eat_nc(arena, state, err_made_progress)?;
     if !sp.is_empty() && state.column() < min_indent {
-        return Err((ok_pr, indent_problem(start)));
+        let err_pr = if err_made_progress {
+            MadeProgress
+        } else {
+            ok_pr
+        };
+        return Err((err_pr, indent_problem(start)));
     }
     Ok((ok_pr, sp, state))
 }

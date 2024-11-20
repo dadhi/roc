@@ -419,7 +419,7 @@ pub fn parse_ident_chain<'a>(
                             chomped += width;
                             unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) }
                         }
-                        Err(MadeProgress) => todo!(), // todo: @wip @ask this is original todo, can I write the test to expose it?
+                        Err(MadeProgress) => todo!(), // todo: @ask this is original todo, can I write the test to expose it?
                         Err(NoProgress) => unsafe {
                             std::str::from_utf8_unchecked(&bytes[..chomped])
                         },

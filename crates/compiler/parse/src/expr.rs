@@ -2414,9 +2414,9 @@ fn rest_of_closure<'a>(
     // Parse the params, params are comma-separated
     let inc_indent: u32 = slash_indent + 1;
     let param_pos = state.pos();
-    let (spaces_before, state) =
+    let (_, spaces_before, state) =
         match eat_nc_check(EClosure::IndentArg, arena, state, inc_indent, false) {
-            Ok((_, out, state)) => (out, state),
+            Ok(ok) => ok,
             Err((NoProgress, _)) => return Err((MadeProgress, EClosure::Arg(param_pos))),
             Err(err) => return Err(err),
         };

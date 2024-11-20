@@ -8,9 +8,7 @@ use crate::parser::{
     at_keyword,
     Progress::{self, *},
 };
-use crate::parser::{
-    collection_inner, zero_or_more, EPattern, PInParens, PList, PRecord, ParseResult, Parser,
-};
+use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord, ParseResult, Parser};
 use crate::state::State;
 use crate::string_literal::{rest_of_str_like, StrLikeLiteral};
 use bumpalo::collections::string::String;
@@ -158,33 +156,33 @@ fn parse_pattern_as<'a>(
     }
 }
 
-// todo: @wip combine those 2 fns together and inline zero_or_more
-fn loc_tag_pattern_args_help<'a>() -> impl Parser<'a, Vec<'a, Loc<Pattern<'a>>>, EPattern<'a>> {
-    zero_or_more(loc_tag_pattern_arg(false))
-}
-
-/// Like `loc_tag_pattern_args_help`, but stops if a "implements" keyword is seen (indicating an ability).
-fn loc_type_def_tag_pattern_args_help<'a>(
-) -> impl Parser<'a, Vec<'a, Loc<Pattern<'a>>>, EPattern<'a>> {
-    zero_or_more(loc_tag_pattern_arg(true))
-}
-
 // Don't parse operators, because they have a higher precedence than function application.
 // If we encounter one, we're done parsing function args!
-fn loc_tag_pattern_arg<'a>(
+fn type_tag_or_def_tag_pattern_args<'a>(
     stop_on_has_kw: bool,
-) -> impl Parser<'a, Loc<Pattern<'a>>, EPattern<'a>> {
-    move |arena, state: State<'a>, min_indent| {
-        let start = state.pos();
-        let (_, spaces, state) =
+    arena: &'a Bump,
+    mut state: State<'a>,
+    min_indent: u32,
+) -> ParseResult<'a, Vec<'a, Loc<Pattern<'a>>>, EPattern<'a>> {
+    let mut patterns = Vec::with_capacity_in(1, arena);
+    loop {
+        let prev = state.clone();
+
+        let (_, spaces, next) =
             match eat_nc_check(EPattern::IndentStart, arena, state, min_indent, false) {
                 Ok(ok) => ok,
-                Err((_, fail)) => return Err((NoProgress, fail)),
+                Err(_) => break Ok((Progress::when(!patterns.is_empty()), patterns, prev)),
             };
 
         // Cannot have arguments here, pass `false` to make sure `Foo Bar 1` is parsed as `Foo (Bar) 1`, and not `Foo (Bar 1)`
-        let (Loc { region, mut value }, state) =
-            parse_loc_pattern_etc(false, arena, state, min_indent)?;
+        let (Loc { region, mut value }, next) =
+            match parse_loc_pattern_etc(false, arena, next, min_indent) {
+                Ok(ok) => ok,
+                Err((NoProgress, _)) => {
+                    break Ok((Progress::when(!patterns.is_empty()), patterns, prev))
+                }
+                Err(err) => break Err(err),
+            };
 
         if stop_on_has_kw
             && matches!(
@@ -195,13 +193,14 @@ fn loc_tag_pattern_arg<'a>(
                 }
             )
         {
-            Err((NoProgress, EPattern::End(start)))
-        } else {
-            if !spaces.is_empty() {
-                value = Pattern::SpaceBefore(arena.alloc(value), spaces);
-            }
-            Ok((MadeProgress, Loc::at(region, value), state))
+            break Ok((Progress::when(!patterns.is_empty()), patterns, prev));
         }
+
+        if !spaces.is_empty() {
+            value = Pattern::SpaceBefore(arena.alloc(value), spaces);
+        }
+        state = next;
+        patterns.push(Loc::at(region, value));
     }
 }
 
@@ -356,7 +355,7 @@ fn parse_ident_pattern<'a>(
             // Make sure `Foo Bar 1` is parsed as `Foo (Bar) 1`, and not `Foo (Bar 1)`
             if can_have_arguments {
                 let (_, loc_args, state) =
-                    loc_type_def_tag_pattern_args_help().parse(arena, state, min_indent)?;
+                    type_tag_or_def_tag_pattern_args(true, arena, state, min_indent)?;
 
                 if loc_args.is_empty() {
                     Ok((loc_tag, state))
@@ -378,7 +377,7 @@ fn parse_ident_pattern<'a>(
             // Make sure `@Foo Bar 1` is parsed as `@Foo (Bar) 1`, and not `@Foo (Bar 1)`
             if can_have_arguments {
                 let (_, loc_args, state) =
-                    loc_tag_pattern_args_help().parse(arena, state, min_indent)?;
+                    type_tag_or_def_tag_pattern_args(false, arena, state, min_indent)?;
 
                 if loc_args.is_empty() {
                     Ok((loc_pat, state))

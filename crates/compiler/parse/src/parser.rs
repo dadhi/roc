@@ -1144,24 +1144,3 @@ where
         _ => Err((NoProgress, to_error(state.pos()))),
     }
 }
-
-/// Applies the parser as many times as possible.
-/// This parser will only fail if the given parser makes partial progress.
-pub fn zero_or_more<'a, Output, E: 'a>(
-    parser: impl Parser<'a, Output, E>,
-) -> impl Parser<'a, bumpalo::collections::Vec<'a, Output>, E> {
-    move |arena: &'a Bump, mut state: State<'a>, min_indent: u32| {
-        let mut out = Vec::with_capacity_in(1, arena);
-        loop {
-            let prev = state.clone();
-            match parser.parse(arena, state, min_indent) {
-                Ok((_, elem, next)) => {
-                    state = next;
-                    out.push(elem);
-                }
-                Err((NoProgress, _)) => break Ok((Progress::when(!out.is_empty()), out, prev)),
-                Err(err) => break Err(err),
-            }
-        }
-    }
-}

@@ -1,7 +1,7 @@
 use crate::ast::{Spaced, TryTarget};
 use crate::keyword::is_keyword;
+use crate::parser::EExpr;
 use crate::parser::Progress::{self, *};
-use crate::parser::{EExpr, ParseResult};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
@@ -67,7 +67,7 @@ pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Prog
             if may_be_kw && is_keyword(ident) {
                 Err(NoProgress)
             } else {
-                Ok((ident, state.advance(ident.len())))
+                Ok((ident, state.inc_len(ident)))
             }
         }
         Err(p) => Err(p),
@@ -79,27 +79,29 @@ pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Prog
 /// * A module name
 /// * A type name
 /// * A tag
-pub fn uppercase<'a>(state: State<'a>) -> ParseResult<'a, Loc<Spaced<'a, UppercaseIdent<'a>>>, ()> {
+pub fn uppercase<'a>(
+    state: State<'a>,
+) -> Result<(Loc<Spaced<'a, UppercaseIdent<'a>>>, State<'a>), Progress> {
     let start = state.pos();
     match chomp_uppercase_part(state.bytes()) {
-        Err(p) => Err((p, ())),
+        Err(p) => Err(p),
         Ok(ident) => {
             let state = state.inc_len(ident);
             let ident = state.loc(start, Spaced::Item(ident.into()));
-            Ok((MadeProgress, ident, state))
+            Ok((ident, state))
         }
     }
 }
 
 #[inline(always)]
-pub fn parse_anycase_ident(state: State<'_>) -> ParseResult<'_, &str, ()> {
+pub fn parse_anycase_ident(state: State<'_>) -> Result<(&str, State<'_>), Progress> {
     match chomp_anycase_part(state.bytes()) {
-        Err(p) => Err((p, ())),
+        Err(p) => Err(p),
         Ok((ident, may_be_kw)) => {
             if may_be_kw && is_keyword(ident) {
-                Err((MadeProgress, ()))
+                Err(MadeProgress)
             } else {
-                Ok((MadeProgress, ident, state.inc_len(ident)))
+                Ok((ident, state.inc_len(ident)))
             }
         }
     }

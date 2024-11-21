@@ -890,61 +890,60 @@ where
 
 // It is always returns Err with MadeProgress, because it the inner parser between the opening and closing symbols.
 pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a + SpaceProblem>(
-    elem_p: impl Parser<'a, Loc<Elem>, E> + 'a,
+    arena: &'a Bump,
+    state: State<'a>,
+    elem_p: impl Fn(&'a Bump, State<'a>) -> Result<(Loc<Elem>, State<'a>), (Progress, E)> + 'a,
     space_before: impl Fn(&'a Elem, &'a [crate::ast::CommentOrNewline<'a>]) -> Elem,
-) -> impl Parser<'a, crate::ast::Collection<'a, Loc<Elem>>, E> {
-    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let (_, (first_spaces, _), state) = eat_nc(arena, state, true)?;
+) -> Result<(crate::ast::Collection<'a, Loc<Elem>>, State<'a>), (Progress, E)> {
+    let (_, (first_spaces, _), state) = eat_nc(arena, state, true)?;
 
-        let (_, first_item, state) = match elem_p.parse(arena, state.clone(), min_indent) {
-            Ok(ok) => ok,
-            Err((NoProgress, _)) => {
-                let empty = Collection::with_items_and_comments(arena, &[], first_spaces);
-                return Ok((MadeProgress, empty, state));
-            }
-            Err(err) => return Err(err),
-        };
-
-        let (_, (spaces_after, _), state) = eat_nc(arena, state, true)?;
-        let mut first_item = first_item.spaced_after(arena, spaces_after);
-
-        if !first_spaces.is_empty() {
-            let spaced_val = space_before(arena.alloc(first_item.value), first_spaces);
-            first_item = Loc::at(first_item.region, spaced_val);
+    let (first_item, state) = match elem_p(arena, state.clone()) {
+        Ok(ok) => ok,
+        Err((NoProgress, _)) => {
+            let empty = Collection::with_items_and_comments(arena, &[], first_spaces);
+            return Ok((empty, state));
         }
+        Err(err) => return Err(err),
+    };
 
-        let mut items = Vec::with_capacity_in(1, arena);
-        items.push(first_item);
+    let (_, (spaces_after, _), state) = eat_nc(arena, state, true)?;
+    let mut first_item = first_item.spaced_after(arena, spaces_after);
 
-        let mut state = state;
-        loop {
-            if state.bytes().first() != Some(&b',') {
-                break;
-            }
-            state.inc_mut();
-            match eat_nc::<'a, E>(arena, state.clone(), false) {
-                Ok((_, (spb, _), news)) => {
-                    let (_, elem, news) = match elem_p.parse(arena, news, min_indent) {
-                        Ok(ok) => ok,
-                        Err(_) => break,
-                    };
-                    let (item, news) = match eat_nc::<'a, E>(arena, news.clone(), false) {
-                        Ok((_, (spa, _), news)) => (elem.spaced_around(arena, spb, spa), news),
-                        Err(_) => (elem.spaced_before(arena, spb), news),
-                    };
-                    items.push(item);
-                    state = news;
-                }
-                Err(_) => break,
-            }
-        }
-
-        let (_, (final_spaces, _), state) = eat_nc(arena, state, true)?;
-
-        let items =
-            Collection::with_items_and_comments(arena, items.into_bump_slice(), final_spaces);
-        Ok((MadeProgress, items, state))
+    if !first_spaces.is_empty() {
+        let spaced_val = space_before(arena.alloc(first_item.value), first_spaces);
+        first_item = Loc::at(first_item.region, spaced_val);
     }
+
+    let mut items = Vec::with_capacity_in(1, arena);
+    items.push(first_item);
+
+    let mut state = state;
+    loop {
+        if state.bytes().first() != Some(&b',') {
+            break;
+        }
+        state.inc_mut();
+        match eat_nc::<'a, E>(arena, state.clone(), false) {
+            Ok((_, (spb, _), news)) => {
+                let (elem, news) = match elem_p(arena, news) {
+                    Ok(ok) => ok,
+                    Err(_) => break,
+                };
+                let (item, news) = match eat_nc::<'a, E>(arena, news.clone(), false) {
+                    Ok((_, (spa, _), news)) => (elem.spaced_around(arena, spb, spa), news),
+                    Err(_) => (elem.spaced_before(arena, spb), news),
+                };
+                items.push(item);
+                state = news;
+            }
+            Err(_) => break,
+        }
+    }
+
+    let (_, (final_spaces, _), state) = eat_nc(arena, state, true)?;
+
+    let items = Collection::with_items_and_comments(arena, items.into_bump_slice(), final_spaces);
+    Ok((items, state))
 }
 
 /// Creates a parser that always succeeds with the given argument as output.

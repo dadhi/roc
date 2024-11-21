@@ -163,7 +163,7 @@ fn type_tag_or_def_tag_pattern_args<'a>(
     arena: &'a Bump,
     mut state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, Vec<'a, Loc<Pattern<'a>>>, EPattern<'a>> {
+) -> Result<(Vec<'a, Loc<Pattern<'a>>>, State<'a>), (Progress, EPattern<'a>)> {
     let mut patterns = Vec::with_capacity_in(1, arena);
     loop {
         let prev = state.clone();
@@ -171,29 +171,25 @@ fn type_tag_or_def_tag_pattern_args<'a>(
         let (_, spaces, next) =
             match eat_nc_check(EPattern::IndentStart, arena, state, min_indent, false) {
                 Ok(ok) => ok,
-                Err(_) => break Ok((Progress::when(!patterns.is_empty()), patterns, prev)),
+                Err(_) => break Ok((patterns, prev)),
             };
 
         // Cannot have arguments here, pass `false` to make sure `Foo Bar 1` is parsed as `Foo (Bar) 1`, and not `Foo (Bar 1)`
         let (Loc { region, mut value }, next) =
             match parse_loc_pattern_etc(false, arena, next, min_indent) {
                 Ok(ok) => ok,
-                Err((NoProgress, _)) => {
-                    break Ok((Progress::when(!patterns.is_empty()), patterns, prev))
-                }
+                Err((NoProgress, _)) => break Ok((patterns, prev)),
                 Err(err) => break Err(err),
             };
 
-        if stop_on_has_kw
-            && matches!(
-                value,
-                Pattern::Identifier {
-                    ident: crate::keyword::IMPLEMENTS,
-                    ..
-                }
-            )
-        {
-            break Ok((Progress::when(!patterns.is_empty()), patterns, prev));
+        if stop_on_has_kw {
+            if let Pattern::Identifier {
+                ident: crate::keyword::IMPLEMENTS,
+                ..
+            } = value
+            {
+                break Ok((patterns, prev));
+            }
         }
 
         if !spaces.is_empty() {
@@ -354,7 +350,7 @@ fn parse_ident_pattern<'a>(
 
             // Make sure `Foo Bar 1` is parsed as `Foo (Bar) 1`, and not `Foo (Bar 1)`
             if can_have_arguments {
-                let (_, loc_args, state) =
+                let (loc_args, state) =
                     type_tag_or_def_tag_pattern_args(true, arena, state, min_indent)?;
 
                 if loc_args.is_empty() {
@@ -376,7 +372,7 @@ fn parse_ident_pattern<'a>(
 
             // Make sure `@Foo Bar 1` is parsed as `@Foo (Bar) 1`, and not `@Foo (Bar 1)`
             if can_have_arguments {
-                let (_, loc_args, state) =
+                let (loc_args, state) =
                     type_tag_or_def_tag_pattern_args(false, arena, state, min_indent)?;
 
                 if loc_args.is_empty() {

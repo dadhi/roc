@@ -462,15 +462,14 @@ pub(crate) fn parse_expr_start<'a>(
                             let (_, spaces_after_op, state) =
                                 eat_nc_check(EExpr::IndentEnd, arena, state, min_indent, false)?;
 
-                            let loc_op = Loc::pos(op_start, op_end, op);
                             match op {
-                                // a `-` is unary if it is preceded by a space and not followed by a space
                                 BinOp::Minus
                                     if expr_state.end != op_start && op_end == state.pos() =>
                                 {
+                                    let op_at = Region::new(op_start, op_end);
                                     parse_negative_term(
                                         start, arena, state, min_indent, inc_indent, expr_state,
-                                        flags, before_op, loc_op,
+                                        flags, before_op, op_at,
                                     )
                                 }
                                 _ => parse_after_binop(
@@ -482,7 +481,7 @@ pub(crate) fn parse_expr_start<'a>(
                                     flags,
                                     spaces_after_op,
                                     expr_state,
-                                    loc_op,
+                                    Loc::pos(op_start, op_end, op),
                                 ),
                             }
                         }
@@ -531,6 +530,7 @@ pub fn parse_repl_defs_and_optional_expr<'a>(
     Ok((defs, last_expr))
 }
 
+// todo: @wip called once, consider inlining
 fn parse_stmt_start<'a>(
     flags: ExprParseFlags,
     comment_region: Region,
@@ -1460,7 +1460,7 @@ fn parse_stmt_operator<'a>(
     flags: ExprParseFlags,
     expr_state: ExprState<'a>,
     loc_op: Loc<OperatorOrDef>,
-    initial_state: State<'a>,
+    initial: State<'a>,
 ) -> Result<(Stmt<'a>, State<'a>), (Progress, EExpr<'a>)> {
     let (spaces_after_op, state) = eat_nc_loc_c(EExpr::IndentEnd, arena, state, min_indent, false)?;
 
@@ -1472,7 +1472,6 @@ fn parse_stmt_operator<'a>(
     match op {
         OperatorOrDef::BinOp(BinOp::When) => unreachable!("the case handled by the caller"),
         OperatorOrDef::BinOp(BinOp::Minus) if expr_state.end != op_start && op_end == new_start => {
-            // a `-` is unary if it is preceded by a space and not followed by a space
             parse_negative_term(
                 start,
                 arena,
@@ -1481,8 +1480,8 @@ fn parse_stmt_operator<'a>(
                 inc_indent,
                 expr_state,
                 flags,
-                initial_state,
-                loc_op.with_value(BinOp::Minus),
+                initial,
+                loc_op.region,
             )
             .map(|(expr, state)| (Stmt::Expr(expr), state))
         }
@@ -1675,14 +1674,13 @@ fn parse_stmt_multi_backpassing<'a>(
                     Err((_, fail)) => {
                         // If the delimiter parsed, but the following
                         // element did not, that's a fatal error.
-                        let progress =
-                            Progress::from_lengths(start_bytes_len, next_state.bytes().len());
+                        let err_pr = Progress::when(start_bytes_len > next_state.bytes().len());
                         let fail = if let EPattern::IndentEnd(_) = fail {
                             EExpr::UnexpectedComma(start.prev())
                         } else {
                             EExpr::Pattern(arena.alloc(fail), start)
                         };
-                        return Err((progress, fail));
+                        return Err((err_pr, fail));
                     }
                 }
             };
@@ -1740,6 +1738,7 @@ fn parse_stmt_multi_backpassing<'a>(
 }
 
 /// We just saw a unary negation operator, and now we need to parse the expression.
+/// A `-` is unary if it is preceded by a space and not followed by a space
 #[allow(clippy::too_many_arguments)]
 fn parse_negative_term<'a>(
     start: Position,
@@ -1749,35 +1748,23 @@ fn parse_negative_term<'a>(
     inc_indent: u32,
     mut expr_state: ExprState<'a>,
     flags: ExprParseFlags,
-    initial_state: State<'a>,
-    loc_op: Loc<BinOp>,
+    initial: State<'a>,
+    op_at: Region,
 ) -> Result<(Expr<'a>, State<'a>), (Progress, EExpr<'a>)> {
     let (negated_expr, state) = parse_term(PARSE_DEFAULT, flags, arena, state, min_indent)?;
 
-    let arg = numeric_negate_expr(
-        arena,
-        &initial_state,
-        loc_op.region,
-        negated_expr,
-        expr_state.spaces_after,
-    );
+    let spaces = expr_state.spaces_after;
+    let arg = numeric_negate_expr(arena, &initial, op_at, negated_expr, spaces);
     expr_state.arguments.push(arena.alloc(arg));
     expr_state.end = state.pos();
 
-    let initial_state = state.clone();
+    let initial = state.clone();
     let (spaces, state) = eat_nc_ok(EExpr::IndentEnd, arena, state, min_indent);
     expr_state.spaces_after = spaces;
 
     // TODO: this should probably be handled in the caller, not here
     parse_expr_end(
-        start,
-        arena,
-        state,
-        min_indent,
-        inc_indent,
-        flags,
-        expr_state,
-        initial_state,
+        start, arena, state, min_indent, inc_indent, flags, expr_state, initial,
     )
 }
 
@@ -1792,7 +1779,7 @@ fn parse_expr_end<'a>(
     inc_indent: u32,
     flags: ExprParseFlags,
     mut expr_state: ExprState<'a>,
-    initial_state: State<'a>,
+    initial: State<'a>,
 ) -> Result<(Expr<'a>, State<'a>), (Progress, EExpr<'a>)> {
     let term_res = if state.column() >= inc_indent {
         parse_term(PARSE_UNDERSCORE, flags, arena, state.clone(), inc_indent)
@@ -1862,13 +1849,12 @@ fn parse_expr_end<'a>(
                         let (_, spaces_after_op, state) =
                             eat_nc_check(EExpr::IndentEnd, arena, state, min_indent, false)?;
 
-                        // a `-` is unary if it is preceded by a space and not followed by a space
-                        let loc_op = Loc::pos(op_start, op_end, op);
                         match op {
                             BinOp::Minus if expr_state.end != op_start && op_end == state.pos() => {
+                                let op_at = Region::new(op_start, op_end);
                                 parse_negative_term(
                                     start, arena, state, min_indent, inc_indent, expr_state, flags,
-                                    before_op, loc_op,
+                                    before_op, op_at,
                                 )
                             }
                             _ => parse_after_binop(
@@ -1880,13 +1866,13 @@ fn parse_expr_end<'a>(
                                 flags,
                                 spaces_after_op,
                                 expr_state,
-                                loc_op,
+                                Loc::pos(op_start, op_end, op),
                             ),
                         }
                     }
                 }
                 // roll back space parsing
-                Err((NoProgress, _)) => Ok((finalize_expr(expr_state, arena), initial_state)),
+                Err((NoProgress, _)) => Ok((finalize_expr(expr_state, arena), initial)),
             }
         }
     }
@@ -3136,17 +3122,17 @@ fn parse_stmt_seq<'a, E: SpaceProblem + 'a>(
     indent_problem: fn(Position) -> E,
 ) -> Result<(Vec<'a, SpacesBefore<'a, Loc<Stmt<'a>>>>, State<'a>), (Progress, E)> {
     let mut stmts = Vec::new_in(arena);
-    let mut state_before_space = state.clone();
+    let mut prev = state.clone();
     loop {
         if at_terminator(&state) {
-            state = state_before_space;
+            state = prev;
             break;
         }
         let start = state.pos();
         let stmt =
             match parse_stmt_start(flags, last_space.region, arena, state.clone(), min_indent) {
                 Ok((stmt, new_state)) => {
-                    state_before_space = new_state.clone();
+                    prev = new_state.clone();
                     state = new_state;
                     stmt
                 }
@@ -3155,7 +3141,7 @@ fn parse_stmt_seq<'a, E: SpaceProblem + 'a>(
                         let fail = wrap_error(arena.alloc(EExpr::Start(start)), start);
                         return Err((NoProgress, fail));
                     }
-                    state = state_before_space;
+                    state = prev;
                     break;
                 }
                 Err((_, fail)) => {
@@ -3173,7 +3159,7 @@ fn parse_stmt_seq<'a, E: SpaceProblem + 'a>(
                 if space.value.is_empty() {
                     // require a newline or a terminator after the statement
                     if at_terminator(&new_state) {
-                        state = state_before_space;
+                        state = prev;
                         break;
                     }
                     let last_pos = state.pos();

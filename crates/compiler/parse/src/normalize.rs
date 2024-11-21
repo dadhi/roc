@@ -1286,7 +1286,6 @@ impl<'a> Normalize<'a> for PInParens<'a> {
         match self {
             PInParens::Empty(_) => PInParens::Empty(Position::zero()),
             PInParens::End(_) => PInParens::End(Position::zero()),
-            PInParens::Open(_) => PInParens::Open(Position::zero()),
             PInParens::Pattern(inner_err, _) => {
                 PInParens::Pattern(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
@@ -1338,12 +1337,8 @@ impl<'a> Normalize<'a> for ETypeInlineAlias {
 impl<'a> Normalize<'a> for ETypeApply {
     fn normalize(&self, _arena: &'a Bump) -> Self {
         match self {
-            ETypeApply::StartNotUppercase(_) => ETypeApply::StartNotUppercase(Position::zero()),
             ETypeApply::End(_) => ETypeApply::End(Position::zero()),
             ETypeApply::Space(inner_err, _) => ETypeApply::Space(*inner_err, Position::zero()),
-            ETypeApply::DoubleDot(_) => ETypeApply::DoubleDot(Position::zero()),
-            ETypeApply::TrailingDot(_) => ETypeApply::TrailingDot(Position::zero()),
-            ETypeApply::StartIsNumber(_) => ETypeApply::StartIsNumber(Position::zero()),
         }
     }
 }
@@ -1386,7 +1381,6 @@ impl<'a> Normalize<'a> for ETypeRecord<'a> {
                 ETypeRecord::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
             ETypeRecord::Space(inner_err, _) => ETypeRecord::Space(*inner_err, Position::zero()),
-            ETypeRecord::IndentOpen(_) => ETypeRecord::IndentOpen(Position::zero()),
             ETypeRecord::IndentColon(_) => ETypeRecord::IndentColon(Position::zero()),
             ETypeRecord::IndentOptional(_) => ETypeRecord::IndentOptional(Position::zero()),
             ETypeRecord::IndentEnd(_) => ETypeRecord::IndentEnd(Position::zero()),

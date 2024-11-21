@@ -26,13 +26,6 @@ pub enum Progress {
 }
 
 impl Progress {
-    pub fn from_lengths(before: usize, after: usize) -> Self {
-        Self::from_consumed(before - after)
-    }
-    pub fn from_consumed(chars_consumed: usize) -> Self {
-        Self::when(chars_consumed != 0)
-    }
-
     #[inline(always)]
     pub fn when(made_progress: bool) -> Self {
         if made_progress {
@@ -598,7 +591,6 @@ pub enum PList<'a> {
 pub enum PInParens<'a> {
     Empty(Position),
     End(Position),
-    Open(Position),
     Pattern(&'a EPattern<'a>, Position),
 
     Space(BadInputError, Position),
@@ -634,7 +626,6 @@ pub enum ETypeRecord<'a> {
 
     Space(BadInputError, Position),
 
-    IndentOpen(Position),
     IndentColon(Position),
     IndentOptional(Position),
     IndentEnd(Position),
@@ -664,14 +655,8 @@ pub enum ETypeInParens<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ETypeApply {
-    ///
-    StartNotUppercase(Position),
     End(Position),
     Space(BadInputError, Position),
-    ///
-    DoubleDot(Position),
-    TrailingDot(Position),
-    StartIsNumber(Position),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -886,23 +871,6 @@ pub fn loc<'a, Output, E: 'a>(
     }
 }
 
-pub fn skip_first<'a, P1, First, P2, Second, E>(p1: P1, p2: P2) -> impl Parser<'a, Second, E>
-where
-    P1: Parser<'a, First, E>,
-    P2: Parser<'a, Second, E>,
-    E: 'a,
-{
-    move |arena: &'a Bump, state: crate::state::State<'a>, min_indent: u32| match p1
-        .parse(arena, state, min_indent)
-    {
-        Ok((p1, _, state)) => match p2.parse(arena, state, min_indent) {
-            Ok((p2, out2, state)) => Ok((p1.or(p2), out2, state)),
-            Err((p2, fail)) => Err((p1.or(p2), fail)),
-        },
-        Err((progress, fail)) => Err((progress, fail)),
-    }
-}
-
 pub fn skip_second<'a, P1, First, P2, Second, E>(p1: P1, p2: P2) -> impl Parser<'a, First, E>
 where
     E: 'a,
@@ -953,7 +921,7 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
             if state.bytes().first() != Some(&b',') {
                 break;
             }
-            state.advance_mut(1);
+            state.inc_mut();
             match eat_nc::<'a, E>(arena, state.clone(), false) {
                 Ok((_, (spb, _), news)) => {
                     let (_, elem, news) = match elem_p.parse(arena, news, min_indent) {
@@ -977,25 +945,6 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
             Collection::with_items_and_comments(arena, items.into_bump_slice(), final_spaces);
         Ok((MadeProgress, items, state))
     }
-}
-
-pub fn collection_trailing_sep_e<
-    'a,
-    Elem: 'a + crate::ast::Spaceable<'a> + Clone,
-    E: 'a + SpaceProblem,
->(
-    opening_brace: impl Parser<'a, (), E>,
-    elem: impl Parser<'a, Loc<Elem>, E> + 'a,
-    closing_brace: impl Parser<'a, (), E>,
-    space_before: impl Fn(&'a Elem, &'a [crate::ast::CommentOrNewline<'a>]) -> Elem,
-) -> impl Parser<'a, crate::ast::Collection<'a, Loc<Elem>>, E> {
-    skip_first(
-        opening_brace,
-        skip_second(
-            reset_min_indent(collection_inner(elem, space_before)),
-            closing_brace,
-        ),
-    )
 }
 
 /// Creates a parser that always succeeds with the given argument as output.

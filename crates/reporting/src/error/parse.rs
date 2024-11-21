@@ -2448,33 +2448,6 @@ fn to_pattern_in_parens_report<'a>(
     let severity = Severity::RuntimeError;
 
     match *parse_problem {
-        PInParens::Open(pos) => {
-            // `Open` case is for exhaustiveness, this case shouldn't not be reachable practically.
-            let surroundings = Region::new(start, pos);
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(
-                    r"I just started parsing a pattern in parentheses, but I got stuck here:",
-                ),
-                alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                alloc.concat([
-                    alloc.reflow(r"A pattern in parentheses looks like "),
-                    alloc.parser_suggestion("(Ok 32)"),
-                    alloc.reflow(r" or "),
-                    alloc.parser_suggestion("(\"hello\")"),
-                    alloc.reflow(" so I was expecting to see an expression next."),
-                ]),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "UNFINISHED PARENTHESES".to_string(),
-                severity,
-            }
-        }
-
         PInParens::Empty(pos) => {
             let surroundings = Region::new(start, pos);
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
@@ -2812,29 +2785,6 @@ fn to_trecord_report<'a>(
 
         ETypeRecord::Type(tipe, pos) => to_type_report(alloc, lines, filename, tipe, pos),
 
-        ETypeRecord::IndentOpen(pos) => {
-            let surroundings = Region::new(start, pos);
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(r"I just started parsing a record type, but I got stuck here:"),
-                alloc.region_with_subregion(lines.convert_region(surroundings), region, severity),
-                alloc.concat([
-                    alloc.reflow(r"Record types look like "),
-                    alloc.parser_suggestion("{ name : String, age : Int },"),
-                    alloc.reflow(" so I was expecting to see a field name next."),
-                ]),
-                note_for_record_type_indent(alloc),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "UNFINISHED RECORD TYPE".to_string(),
-                severity,
-            }
-        }
-
         ETypeRecord::IndentEnd(pos) => {
             match next_line_starts_with_close_curly(alloc.src_lines, lines.convert_pos(pos)) {
                 Some(curly_pos) => {
@@ -3069,89 +3019,6 @@ fn to_tapply_report<'a>(
     let severity = Severity::RuntimeError;
 
     match *parse_problem {
-        ETypeApply::DoubleDot(pos) => {
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(r"I encountered two dots in a row:"),
-                alloc.region(region, severity),
-                alloc.concat([alloc.reflow("Try removing one of them.")]),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "DOUBLE DOT".to_string(),
-                severity,
-            }
-        }
-        ETypeApply::TrailingDot(pos) => {
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(r"I encountered a dot with nothing after it:"),
-                alloc.region(region, severity),
-                alloc.concat([
-                    alloc.reflow("Dots are used to refer to a type in a qualified way, like "),
-                    alloc.parser_suggestion("Num.I64"),
-                    alloc.text(" or "),
-                    alloc.parser_suggestion("List.List a"),
-                    alloc.reflow(". Try adding a type name next."),
-                ]),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "TRAILING DOT".to_string(),
-                severity,
-            }
-        }
-        ETypeApply::StartIsNumber(pos) => {
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(r"I encountered a number at the start of a qualified name segment:"),
-                alloc.region(region, severity),
-                alloc.concat([
-                    alloc.reflow("All parts of a qualified type name must start with an uppercase letter, like "),
-                    alloc.parser_suggestion("Num.I64"),
-                    alloc.text(" or "),
-                    alloc.parser_suggestion("List.List a"),
-                    alloc.text("."),
-                ]),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "WEIRD QUALIFIED NAME".to_string(),
-                severity,
-            }
-        }
-        ETypeApply::StartNotUppercase(pos) => {
-            let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-            let doc = alloc.stack([
-                alloc.reflow(r"I encountered a lowercase letter at the start of a qualified name segment:"),
-                alloc.region(region, severity),
-                alloc.concat([
-                    alloc.reflow("All parts of a qualified type name must start with an uppercase letter, like "),
-                    alloc.parser_suggestion("Num.I64"),
-                    alloc.text(" or "),
-                    alloc.parser_suggestion("List.List a"),
-                    alloc.text("."),
-                ]),
-            ]);
-
-            Report {
-                filename,
-                doc,
-                title: "WEIRD QUALIFIED NAME".to_string(),
-                severity,
-            }
-        }
-
         ETypeApply::End(pos) => {
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
 

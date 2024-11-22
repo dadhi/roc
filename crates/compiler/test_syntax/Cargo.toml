@@ -7,9 +7,6 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
-[features]
-"parse_debug_trace" = ["roc_parse/parse_debug_trace"]
-
 [dependencies]
 bumpalo.workspace = true
 roc_collections = { path = "../collections" }

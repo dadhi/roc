@@ -7,9 +7,6 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 
-[features]
-"parse_debug_trace" = []
-
 [dependencies]
 roc_collections = { path = "../collections" }
 roc_module = { path = "../module" }

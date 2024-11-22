@@ -115,8 +115,8 @@ fn highlight_inner<'a>(
                 '"' | '\'' => {
                     let column = state.column();
                     state.advance_mut(1);
-                    if let Ok((_, item, new_state)) =
-                        rest_of_str_like(b == '\'', column, arena, state.clone(), 0)
+                    if let Ok((item, new_state)) =
+                        rest_of_str_like(b == '\'', column, arena, state.clone())
                     {
                         state = new_state;
                         match item {
@@ -167,7 +167,7 @@ fn highlight_inner<'a>(
                     tokens.push(state.loc(start, Token::Decimal));
                 }
                 '0'..='9' => {
-                    if let Ok((_, _, new_state)) =
+                    if let Ok((_, new_state)) =
                         parse_number_base(false, state.bytes(), state.clone())
                     {
                         state = new_state;

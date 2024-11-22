@@ -2,33 +2,32 @@ use crate::ast::{EscapedChar, SingleQuoteLiteral, StrLiteral, StrSegment};
 use crate::blankspace::{eat_nc, SpacedBuilder};
 use crate::expr::{parse_expr_start, ACCEPT_MULTI_BACKPASSING, CHECK_FOR_ARROW};
 use crate::parser::Progress::{self, *};
-use crate::parser::{BadInputError, ESingleQuote, EString, ParseResult, Parser};
+use crate::parser::{BadInputError, ESingleQuote, EString};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
-use roc_region::all::Loc;
 
 /// One or more ASCII hex digits. (Useful when parsing unicode escape codes,
 /// which must consist entirely of ASCII hex digits.)
-fn ascii_hex_digits<'a>() -> impl Parser<'a, &'a str, EString<'a>> {
-    move |arena, mut state: State<'a>, _min_indent: u32| {
-        let mut buf = bumpalo::collections::String::new_in(arena);
+fn ascii_hex_digits<'a>(
+    arena: &'a Bump,
+    mut state: State<'a>,
+) -> Result<(&'a str, State<'a>), (Progress, EString<'a>)> {
+    let mut buf = bumpalo::collections::String::new_in(arena);
 
-        for &byte in state.bytes().iter() {
-            if (byte as char).is_ascii_hexdigit() {
-                buf.push(byte as char);
-            } else if buf.is_empty() {
-                // We didn't find any hex digits!
-                return Err((NoProgress, EString::CodePtEnd(state.pos())));
-            } else {
-                state.advance_mut(buf.len());
-
-                return Ok((MadeProgress, buf.into_bump_str(), state));
-            }
+    for &byte in state.bytes().iter() {
+        if (byte as char).is_ascii_hexdigit() {
+            buf.push(byte as char);
+        } else if !buf.is_empty() {
+            state.advance_mut(buf.len());
+            return Ok((buf.into_bump_str(), state));
+        } else {
+            // We didn't find any hex digits!
+            return Err((MadeProgress, EString::CodePtEnd(state.pos())));
         }
-
-        Err((NoProgress, EString::CodePtEnd(state.pos())))
     }
+
+    Err((MadeProgress, EString::CodePtEnd(state.pos())))
 }
 
 fn consume_indent(mut state: State, mut indent: u32) -> Result<State, (Progress, EString)> {
@@ -70,25 +69,32 @@ pub enum StrLikeLiteral<'a> {
     Str(StrLiteral<'a>),
 }
 
-pub fn parse_str_literal<'a>() -> impl Parser<'a, StrLiteral<'a>, EString<'a>> {
-    move |arena: &'a Bump, state: State<'a>, min_indent: u32| {
-        let start = state.pos();
-        let column = state.column();
-        let is_single_quote = match state.bytes().first() {
-            Some(&b'"') => false,
-            Some(&b'\'') => true,
-            _ => return Err((NoProgress, EString::Open(start))),
-        };
+impl<'a> StrLikeLiteral<'a> {
+    pub const DOUBLE_DOUBLE_QUOTES: StrLikeLiteral<'static> =
+        StrLikeLiteral::Str(StrLiteral::Block(&[]));
+    pub const DOUBLE_QUOTES: StrLikeLiteral<'static> =
+        StrLikeLiteral::Str(StrLiteral::PlainLine(""));
+}
 
-        match rest_of_str_like(is_single_quote, column, arena, state.inc(), min_indent) {
-            Ok((p, str_like, state)) => match str_like {
-                StrLikeLiteral::SingleQuote(_) => {
-                    Err((p, EString::ExpectedDoubleQuoteGotSingleQuote(start)))
-                }
-                StrLikeLiteral::Str(str_literal) => Ok((p, str_literal, state)),
-            },
-            Err(err) => Err(err),
-        }
+pub fn parse_str_literal<'a>(
+    arena: &'a Bump,
+    state: State<'a>,
+) -> Result<(Progress, StrLiteral<'a>, State<'a>), (Progress, EString<'a>)> {
+    let start = state.pos();
+    let column = state.column();
+    let is_single_quote = match state.bytes().first() {
+        Some(&b'"') => false,
+        Some(&b'\'') => true,
+        _ => return Err((NoProgress, EString::Open(start))),
+    };
+
+    let (str_like, state) = rest_of_str_like(is_single_quote, column, arena, state.inc())?;
+    match str_like {
+        StrLikeLiteral::SingleQuote(_) => Err((
+            MadeProgress,
+            EString::ExpectedDoubleQuoteGotSingleQuote(start),
+        )),
+        StrLikeLiteral::Str(str_literal) => Ok((MadeProgress, str_literal, state)),
     }
 }
 
@@ -97,8 +103,7 @@ pub fn rest_of_str_like<'a>(
     column: u32,
     arena: &'a Bump,
     mut state: State<'a>,
-    min_indent: u32,
-) -> ParseResult<'a, StrLikeLiteral<'a>, EString<'a>> {
+) -> Result<(StrLikeLiteral<'a>, State<'a>), (Progress, EString<'a>)> {
     let mut is_multiline = false;
     let start_state;
     if state.bytes().starts_with(b"\"\"") {
@@ -108,8 +113,7 @@ pub fn rest_of_str_like<'a>(
 
         start_state = state.clone();
         if state.bytes().first() == Some(&b'\n') {
-            state.advance_mut(1);
-            state = consume_indent(state, column)?;
+            state = consume_indent(state.inc(), column)?;
         }
     } else {
         start_state = state.clone();
@@ -146,7 +150,6 @@ pub fn rest_of_str_like<'a>(
                 match std::str::from_utf8(string_bytes) {
                     Ok(string) => {
                         state.advance_mut(string.len());
-
                         segments.push($transform(string));
                     }
                     Err(_) => {
@@ -182,11 +185,7 @@ pub fn rest_of_str_like<'a>(
                     // special case of the empty string
                     if is_multiline {
                         if bytes.as_slice().starts_with(b"\"\"") {
-                            return Ok((
-                                MadeProgress,
-                                StrLikeLiteral::Str(StrLiteral::Block(&[])),
-                                state.advance(3),
-                            ));
+                            return Ok((StrLikeLiteral::DOUBLE_DOUBLE_QUOTES, state.advance(3)));
                         } else {
                             // this quote is in a block string
                             continue;
@@ -194,11 +193,7 @@ pub fn rest_of_str_like<'a>(
                     } else {
                         // This is the end of the string!
                         // Advance 1 for the close quote
-                        return Ok((
-                            MadeProgress,
-                            StrLikeLiteral::Str(StrLiteral::PlainLine("")),
-                            state.advance(1),
-                        ));
+                        return Ok((StrLikeLiteral::DOUBLE_QUOTES, state.inc()));
                     }
                 } else {
                     // the string is non-empty, which means we need to convert any previous segments
@@ -218,7 +213,7 @@ pub fn rest_of_str_like<'a>(
                                 StrLiteral::Block(arena.alloc([segments.into_bump_slice()]))
                             };
 
-                            return Ok((MadeProgress, StrLikeLiteral::Str(expr), state.advance(3)));
+                            return Ok((StrLikeLiteral::Str(expr), state.advance(3)));
                         } else {
                             // this quote is in a block string
                             continue;
@@ -238,7 +233,7 @@ pub fn rest_of_str_like<'a>(
                         };
 
                         // Advance the state 1 to account for the closing `"`
-                        return Ok((MadeProgress, StrLikeLiteral::Str(expr), state.advance(1)));
+                        return Ok((StrLikeLiteral::Str(expr), state.inc()));
                     }
                 };
             }
@@ -288,25 +283,18 @@ pub fn rest_of_str_like<'a>(
                 let text = expr.to_str_in(arena);
 
                 if text.len() > 5 {
-                    return Err((
-                        MadeProgress,
-                        EString::InvalidSingleQuote(ESingleQuote::TooLong, start_state.pos()),
-                    ));
+                    let fail =
+                        EString::InvalidSingleQuote(ESingleQuote::TooLong, start_state.pos());
+                    return Err((MadeProgress, fail));
                 }
 
                 if text.is_empty() {
-                    return Err((
-                        MadeProgress,
-                        EString::InvalidSingleQuote(ESingleQuote::Empty, start_state.pos()),
-                    ));
+                    let fail = EString::InvalidSingleQuote(ESingleQuote::Empty, start_state.pos());
+                    return Err((MadeProgress, fail));
                 }
 
                 // Advance the state 1 to account for the closing `'`
-                return Ok((
-                    MadeProgress,
-                    StrLikeLiteral::SingleQuote(expr),
-                    state.advance(1),
-                ));
+                return Ok((StrLikeLiteral::SingleQuote(expr), state.inc()));
             }
             b'\n' => {
                 if is_multiline {
@@ -367,12 +355,9 @@ pub fn rest_of_str_like<'a>(
                         let new_state = state.inc();
 
                         let digits_pos = new_state.pos();
-                        let (digits, new_state) =
-                            match ascii_hex_digits().parse(arena, new_state, min_indent) {
-                                Ok((_, out, state)) => (out, state),
-                                Err((_, fail)) => return Err((MadeProgress, fail)),
-                            };
-                        let loc_digits = Loc::pos(digits_pos, new_state.pos(), digits);
+                        let (digits, new_state) = ascii_hex_digits(arena, new_state)?;
+
+                        let loc_digits = new_state.loc(digits_pos, digits);
 
                         if new_state.bytes().first() != Some(&b')') {
                             return Err((MadeProgress, EString::CodePtEnd(new_state.pos())));
@@ -450,25 +435,17 @@ pub fn rest_of_str_like<'a>(
 
                 // Parse an arbitrary expression, followed by ')'
                 let expr_pos = state.pos();
-                let (_, (spaces_before, _), news) = match eat_nc(arena, state, false) {
-                    Ok(ok) => ok,
-                    Err((p, fail)) => {
-                        return Err((p, EString::Format(arena.alloc(fail), expr_pos)));
-                    }
-                };
+                let (_, (spaces_before, _), news) = eat_nc(arena, state, false)
+                    .map_err(|(p, fail)| (p, EString::Format(arena.alloc(fail), expr_pos)))?;
 
-                let (expr, mut news) = match parse_expr_start(
+                let (expr, mut news) = parse_expr_start(
                     CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING,
                     None,
                     arena,
                     news,
                     0,
-                ) {
-                    Ok(ok) => ok,
-                    Err((p, fail)) => {
-                        return Err((p, EString::Format(arena.alloc(fail), expr_pos)));
-                    }
-                };
+                )
+                .map_err(|(p, fail)| (p, EString::Format(arena.alloc(fail), expr_pos)))?;
 
                 let expr = expr.spaced_before(arena, spaces_before);
                 let expr = news.loc(expr_pos, &*arena.alloc(expr.value));
@@ -500,14 +477,12 @@ pub fn rest_of_str_like<'a>(
     }
 
     // We ran out of characters before finding a closed quote
-    Err((
-        MadeProgress,
-        if is_single_quote {
-            EString::EndlessSingleQuote(start_state.pos())
-        } else if is_multiline {
-            EString::EndlessMultiLine(start_state.pos())
-        } else {
-            EString::EndlessSingleLine(start_state.pos())
-        },
-    ))
+    let fail = if is_single_quote {
+        EString::EndlessSingleQuote(start_state.pos())
+    } else if is_multiline {
+        EString::EndlessMultiLine(start_state.pos())
+    } else {
+        EString::EndlessSingleLine(start_state.pos())
+    };
+    Err((MadeProgress, fail))
 }

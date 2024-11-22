@@ -10,7 +10,7 @@ use crate::ident::{
 use crate::keyword::{self, is_keyword};
 use crate::parser::{
     at_keyword, collection_inner, ERecord, EType, ETypeApply, ETypeInParens, ETypeInlineAlias,
-    ETypeRecord, ETypeTagUnion, ParseResult,
+    ETypeRecord, ETypeTagUnion,
     Progress::{self, *},
 };
 use crate::state::State;
@@ -23,7 +23,7 @@ fn rest_of_tag_union_type<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, TypeAnnotation<'a>, ETypeTagUnion<'a>> {
+) -> Result<(TypeAnnotation<'a>, State<'a>), (Progress, ETypeTagUnion<'a>)> {
     let (tags, state) = collection_inner(arena, state, parse_tag_type, Tag::SpaceBefore)?;
 
     if state.bytes().first() != Some(&b']') {
@@ -42,8 +42,7 @@ fn rest_of_tag_union_type<'a>(
         }
     };
 
-    let out = TypeAnnotation::TagUnion { tags, ext };
-    Ok((MadeProgress, out, state))
+    Ok((TypeAnnotation::TagUnion { tags, ext }, state))
 }
 
 fn check_type_alias<'a>(
@@ -86,15 +85,15 @@ fn parse_term<'a>(
     let (type_ann, state) = match state.bytes().first() {
         Some(b) => match b {
             b'(' => match rest_of_type_in_parens(start, flags, arena, state.inc(), min_indent) {
-                Ok((_, out, state)) => (out, state),
+                Ok(ok) => ok,
                 Err((p, fail)) => return Err((p, EType::TInParens(fail, start))),
             },
             b'{' => match rest_of_record_type(flags, arena, state.inc(), min_indent) {
-                Ok((_, out, state)) => (state.loc(start, out), state),
+                Ok((out, state)) => (state.loc(start, out), state),
                 Err((p, fail)) => return Err((p, EType::TRecord(fail, start))),
             },
             b'[' => match rest_of_tag_union_type(flags, arena, state.inc(), min_indent) {
-                Ok((_, out, state)) => (state.loc(start, out), state),
+                Ok((out, state)) => (state.loc(start, out), state),
                 Err((p, fail)) => return Err((p, EType::TTagUnion(fail, start))),
             },
             b'*' => {
@@ -203,7 +202,7 @@ fn rest_of_type_in_parens<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, Loc<TypeAnnotation<'a>>, ETypeInParens<'a>> {
+) -> Result<(Loc<TypeAnnotation<'a>>, State<'a>), (Progress, ETypeInParens<'a>)> {
     let elem_p = move |a: &'a Bump, state: State<'a>| {
         let type_pos = state.pos();
         parse_type_expr(
@@ -234,9 +233,9 @@ fn rest_of_type_in_parens<'a>(
     let region = Region::new(start, state.pos());
     if fields.len() > 1 || ext.is_some() {
         let out = Loc::at(region, TypeAnnotation::Tuple { elems: fields, ext });
-        Ok((MadeProgress, out, state))
+        Ok((out, state))
     } else if fields.len() == 1 {
-        Ok((MadeProgress, fields.items[0], state))
+        Ok((fields.items[0], state))
     } else {
         debug_assert!(fields.is_empty());
         Err((MadeProgress, ETypeInParens::Empty(state.pos())))
@@ -370,7 +369,7 @@ fn rest_of_record_type<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, TypeAnnotation<'a>, ETypeRecord<'a>> {
+) -> Result<(TypeAnnotation<'a>, State<'a>), (Progress, ETypeRecord<'a>)> {
     let (fields, state) =
         collection_inner(arena, state, record_type_field, AssignedField::SpaceBefore)?;
 
@@ -389,8 +388,7 @@ fn rest_of_record_type<'a>(
         }
     };
 
-    let record = TypeAnnotation::Record { fields, ext };
-    Ok((MadeProgress, record, state))
+    Ok((TypeAnnotation::Record { fields, ext }, state))
 }
 
 fn parse_applied_type<'a>(

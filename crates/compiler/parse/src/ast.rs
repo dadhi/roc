@@ -2261,14 +2261,6 @@ impl<'a> Expr<'a> {
         ident: "*",
         shortcut: None,
     };
-
-    pub fn is_tag(&self) -> bool {
-        matches!(self, Expr::Tag(_))
-    }
-
-    pub fn is_opaque(&self) -> bool {
-        matches!(self, Expr::OpaqueRef(_))
-    }
 }
 
 macro_rules! impl_extract_spaces {

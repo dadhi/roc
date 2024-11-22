@@ -884,22 +884,3 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
     let items = Collection::with_items_and_comments(arena, items.into_bump_slice(), final_spaces);
     Ok((items, state))
 }
-
-/// Take as input something that looks like a struct literal where values are parsers
-/// and return a parser that runs each parser and returns a struct literal with the
-/// results.
-#[macro_export]
-macro_rules! record {
-    ($name:ident $(:: $name_ext:ident)* { $($field:ident: $parser:expr),* $(,)? }) => {
-        move |arena: &'a bumpalo::Bump, state: $crate::state::State<'a>, min_indent: u32| {
-            let mut state = state;
-            let mut progress = NoProgress;
-            $(
-                let (new_progress, $field, new_state) = $parser.parse(arena, state, min_indent)?;
-                state = new_state;
-                progress = progress.or(new_progress);
-            )*
-            Ok((progress, $name $(:: $name_ext)* { $($field),* }, state))
-        }
-    };
-}

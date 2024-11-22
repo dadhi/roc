@@ -8,7 +8,7 @@ use crate::parser::{
     at_keyword,
     Progress::{self, *},
 };
-use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord, ParseResult};
+use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord};
 use crate::state::State;
 use crate::string_literal::{rest_of_str_like, StrLikeLiteral};
 use bumpalo::collections::string::String;
@@ -96,8 +96,8 @@ fn parse_loc_pattern_etc<'a>(
             b'[' => rest_of_list_pattern(start, arena, state.inc()),
             b'"' | b'\'' => {
                 let column = state.column();
-                match rest_of_str_like(*b == b'\'', column, arena, state.inc(), min_indent) {
-                    Ok((_, literal, state)) => {
+                match rest_of_str_like(*b == b'\'', column, arena, state.inc()) {
+                    Ok((literal, state)) => {
                         let literal = match literal {
                             StrLikeLiteral::Str(s) => Pattern::StrLiteral(s),
                             StrLikeLiteral::SingleQuote(s) => {
@@ -111,15 +111,11 @@ fn parse_loc_pattern_etc<'a>(
                 }
             }
             b'0'..=b'9' => match parse_number_base(false, state.bytes(), state) {
-                Ok((_, literal, state)) => {
-                    Ok((state.loc(start, literal_to_pattern(literal)), state))
-                }
+                Ok((literal, state)) => Ok((state.loc(start, literal_to_pattern(literal)), state)),
                 Err((p, fail)) => Err((p, EPattern::NumLiteral(fail, start))),
             },
             b'-' => match parse_number_base(true, &state.bytes()[1..], state) {
-                Ok((_, literal, state)) => {
-                    Ok((state.loc(start, literal_to_pattern(literal)), state))
-                }
+                Ok((literal, state)) => Ok((state.loc(start, literal_to_pattern(literal)), state)),
                 Err((NoProgress, _)) => Err((NoProgress, EPattern::Start(start))),
                 Err((p, fail)) => Err((p, EPattern::NumLiteral(fail, start))),
             },
@@ -441,7 +437,7 @@ fn rest_of_record_pattern<'a>(
 pub fn parse_record_pattern_fields<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> ParseResult<'a, Collection<'a, Loc<Pattern<'a>>>, PRecord<'a>> {
+) -> Result<(Collection<'a, Loc<Pattern<'a>>>, State<'a>), (Progress, PRecord<'a>)> {
     if state.bytes().first() != Some(&b'{') {
         return Err((NoProgress, PRecord::Open(state.pos())));
     }
@@ -453,7 +449,7 @@ pub fn parse_record_pattern_fields<'a>(
     if state.bytes().first() != Some(&b'}') {
         return Err((MadeProgress, PRecord::End(state.pos())));
     }
-    Ok((MadeProgress, patterns, state.inc()))
+    Ok((patterns, state.inc()))
 }
 
 fn parse_record_pattern_field<'a>(

@@ -252,8 +252,7 @@ fn parse_tag_type<'a>(
         Ok(out) => (out, state.inc_len(out)),
         Err(p) => return Err((p, ETypeTagUnion::End(state.pos()))),
     };
-
-    let name = Loc::pos(start, state.pos(), name);
+    let name = state.loc(start, name);
 
     let args_pos = state.pos();
     let mut state = state;
@@ -311,7 +310,7 @@ fn record_type_field<'a>(
         }
     };
 
-    let loc_label = Loc::pos(start, state.pos(), label);
+    let loc_label = state.loc(start, label);
 
     let (_, spaces, state) = eat_nc_check(ETypeRecord::IndentEnd, arena, state, 0, false)?;
 

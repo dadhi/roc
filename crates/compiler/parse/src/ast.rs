@@ -2262,20 +2262,6 @@ impl<'a> Expr<'a> {
         shortcut: None,
     };
 
-    pub fn loc_ref(&'a self, region: Region) -> Loc<&'a Self> {
-        Loc {
-            region,
-            value: self,
-        }
-    }
-
-    pub fn loc(self, region: Region) -> Loc<Self> {
-        Loc {
-            region,
-            value: self,
-        }
-    }
-
     pub fn is_tag(&self) -> bool {
         matches!(self, Expr::Tag(_))
     }

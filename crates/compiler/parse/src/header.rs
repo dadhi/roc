@@ -4,14 +4,14 @@ use crate::ast::{
     Collection, CommentOrNewline, Defs, Header, Malformed, Pattern, Spaced, Spaces, SpacesBefore,
     StrLiteral, TypeAnnotation,
 };
-use crate::blankspace::{eat_nc_check, space0_e, SpacedBuilder};
+use crate::blankspace::{eat_nc_check, SpacedBuilder};
 use crate::expr::merge_spaces;
 use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseIdent};
 use crate::parser::Progress::{self, *};
 use crate::parser::{
-    at_keyword, collection_inner, loc, skip_second, specialize_err, succeed, EExposes, EHeader,
-    EImports, EPackageEntry, EPackageName, EPackages, EParams, EProvides, ERequires, ETypedIdent,
-    ParseResult, Parser, SourceError, SpaceProblem, SyntaxError,
+    at_keyword, collection_inner, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
+    EPackages, EParams, EProvides, ERequires, ETypedIdent, ParseResult, Parser, SourceError,
+    SpaceProblem, SyntaxError,
 };
 use crate::pattern::parse_record_pattern_fields;
 use crate::state::State;
@@ -42,92 +42,91 @@ pub fn parse_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
 ) -> Result<(SpacesBefore<'a, Header<'a>>, State<'a>), SourceError<'a, EHeader<'a>>> {
-    match header().parse(arena, state.clone(), 0) {
-        Ok((_, module, state)) => Ok((module, state)),
+    match header(arena, state.clone()) {
+        Ok((module, state)) => Ok((module, state)),
         Err((_, fail)) => Err(SourceError::new(fail, &state)),
     }
 }
 
-pub fn header<'a>() -> impl Parser<'a, SpacesBefore<'a, Header<'a>>, EHeader<'a>> {
-    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-        let (_, before, state) =
-            eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+pub fn header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+) -> Result<(SpacesBefore<'a, Header<'a>>, State<'a>), (Progress, EHeader<'a>)> {
+    let (_, before, state) = eat_nc_check(EHeader::IndentStart, arena, state, 0, false)?;
 
-        let inc_indent = min_indent + 1;
-
-        if at_keyword("module", &state) {
-            let state = state.advance("module".len());
-            let (_, out, state) = parse_module_header(arena, state, inc_indent)?;
-            let item = Header::Module(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        if at_keyword("interface", &state) {
-            let state = state.advance("interface".len());
-            let (_, out, state) = interface_header().parse(arena, state, inc_indent)?;
-            let item = Header::Module(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        if at_keyword("app", &state) {
-            let state = state.advance("app".len());
-            let (_, out, state) = match app_header().parse(arena, state.clone(), inc_indent) {
-                Ok(ok) => ok,
-                Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
-                Err((NoProgress, _)) => old_app_header().parse(arena, state, inc_indent)?,
-            };
-            let item = Header::App(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        if at_keyword("package", &state) {
-            let state = state.advance("package".len());
-            let (_, out, state) = match package_header().parse(arena, state.clone(), inc_indent) {
-                Ok(ok) => ok,
-                Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
-                Err((NoProgress, _)) => old_package_header().parse(arena, state, inc_indent)?,
-            };
-            let item = Header::Package(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        if at_keyword("platform", &state) {
-            let state = state.advance("platform".len());
-            let (_, out, state) = platform_header().parse(arena, state, inc_indent)?;
-            let item = Header::Platform(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        if at_keyword("hosted", &state) {
-            let state = state.advance("hosted".len());
-            let (_, out, state) = hosted_header().parse(arena, state, inc_indent)?;
-            let item = Header::Hosted(out);
-            return Ok((MadeProgress, SpacesBefore { before, item }, state));
-        }
-
-        Err((NoProgress, EHeader::Start(state.pos())))
+    let inc_indent = 1;
+    if at_keyword("module", &state) {
+        let state = state.inc_len("module");
+        let (item, state) = parse_module_header(arena, state, inc_indent)?;
+        let item = Header::Module(item);
+        return Ok((SpacesBefore { before, item }, state));
     }
+
+    if at_keyword("interface", &state) {
+        let state = state.inc_len("interface");
+        let (_, out, state) = interface_header().parse(arena, state, inc_indent)?;
+        let item = Header::Module(out);
+        return Ok((SpacesBefore { before, item }, state));
+    }
+
+    if at_keyword("app", &state) {
+        let state = state.inc_len("app");
+        let (out, state) = match app_header(arena, state.clone(), inc_indent) {
+            Ok(ok) => ok,
+            Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
+            Err((NoProgress, _)) => old_app_header(arena, state, inc_indent)?,
+        };
+        let item = Header::App(out);
+        return Ok((SpacesBefore { before, item }, state));
+    }
+
+    if at_keyword("package", &state) {
+        let state = state.inc_len("package");
+        let (out, state) = match package_header(arena, state.clone(), inc_indent) {
+            Ok(ok) => ok,
+            Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
+            Err((NoProgress, _)) => old_package_header(arena, state, inc_indent)?,
+        };
+        let item = Header::Package(out);
+        return Ok((SpacesBefore { before, item }, state));
+    }
+
+    if at_keyword("platform", &state) {
+        let state = state.inc_len("platform");
+        let (_, out, state) = platform_header().parse(arena, state, inc_indent)?;
+        let item = Header::Platform(out);
+        return Ok((SpacesBefore { before, item }, state));
+    }
+
+    if at_keyword("hosted", &state) {
+        let state = state.inc_len("hosted");
+        let (header, state) = hosted_header(arena, state, inc_indent)?;
+        let item = Header::Hosted(header);
+        return Ok((SpacesBefore { before, item }, state));
+    }
+
+    Err((NoProgress, EHeader::Start(state.pos())))
 }
 
 fn parse_module_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> ParseResult<'a, ModuleHeader<'a>, EHeader<'a>> {
+) -> Result<(ModuleHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
     let (_, after_keyword, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
-    let params_pos = state.pos();
+    let pos = state.pos();
     let (params, state) = match parse_module_params(arena, state.clone(), min_indent) {
         Ok((_, out, state)) => (Some(out), state),
         Err((NoProgress, _)) => (None, state),
-        Err((p, fail)) => return Err((p, EHeader::Params(fail, params_pos))),
+        Err((p, fail)) => return Err((p, EHeader::Params(fail, pos))),
     };
 
-    let exposes_pos = state.pos();
+    let pos = state.pos();
     let (_, exposes, state) = exposes_list()
         .parse(arena, state, min_indent)
-        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, exposes_pos)))?;
+        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, pos)))?;
 
     let header = ModuleHeader {
         after_keyword,
@@ -135,7 +134,7 @@ fn parse_module_header<'a>(
         exposes,
         interface_imports: None,
     };
-    Ok((MadeProgress, header, state))
+    Ok((header, state))
 }
 
 fn parse_module_params<'a>(
@@ -185,13 +184,13 @@ macro_rules! merge_n_spaces {
 /// Parse old interface headers so we can format them into module headers
 fn interface_header<'a>() -> impl Parser<'a, ModuleHeader<'a>, EHeader<'a>> {
     let after_keyword_p = |arena, state: State<'a>, min_indent: u32| {
-        let (p, before_name, state) =
+        let (sp_err, before_name, state) =
             eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
         let name_pos = state.pos();
         let state = match parse_module_name(state) {
             Ok((_, state)) => state,
-            Err(p2) => return Err((p2.or(p), EHeader::ModuleName(name_pos))),
+            Err(p) => return Err((p.or(sp_err), EHeader::ModuleName(name_pos))),
         };
 
         let kw_pos = state.pos();
@@ -227,43 +226,45 @@ fn interface_header<'a>() -> impl Parser<'a, ModuleHeader<'a>, EHeader<'a>> {
     }
 }
 
-fn hosted_header<'a>() -> impl Parser<'a, HostedHeader<'a>, EHeader<'a>> {
-    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-        let (_, before_name, state) =
-            eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+fn hosted_header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> Result<(HostedHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+    let (_, before_name, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
-        let name_pos = state.pos();
-        let (name, state) = match parse_module_name(state) {
-            Ok(ok) => ok,
-            Err(p) => return Err((p, EHeader::ModuleName(name_pos))),
-        };
-        let name = Loc::pos(name_pos, state.pos(), name);
+    let name_pos = state.pos();
+    let (name, state) = match parse_module_name(state) {
+        Ok(ok) => ok,
+        Err(p) => return Err((p, EHeader::ModuleName(name_pos))),
+    };
+    let name = Loc::pos(name_pos, state.pos(), name);
 
-        let exposes_pos = state.pos();
-        let (_, exposes, state) = match record!(KeywordItem {
-            keyword: exposes_kw(),
-            item: exposes_list()
-        })
+    let exposes_pos = state.pos();
+    let (_, keyword, state) = exposes_kw()
         .parse(arena, state, min_indent)
-        {
-            Ok(ok) => ok,
-            Err((p, fail)) => return Err((p, EHeader::Exposes(fail, exposes_pos))),
-        };
+        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, exposes_pos)))?;
 
-        let imports_pos = state.pos();
-        let (_, imports, state) = match imports().parse(arena, state, min_indent) {
-            Ok(ok) => ok,
-            Err((p, fail)) => return Err((p, EHeader::Imports(fail, imports_pos))),
-        };
+    let (_, item, state) = exposes_list()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, exposes_pos)))?;
 
-        let header = HostedHeader {
-            before_name,
-            name,
-            exposes,
-            imports,
-        };
-        Ok((MadeProgress, header, state))
-    }
+    let exposes = KeywordItem { keyword, item };
+
+    let imports_pos = state.pos();
+    let (_, imports, state) = match imports().parse(arena, state, min_indent) {
+        Ok(ok) => ok,
+        Err((p, fail)) => return Err((p, EHeader::Imports(fail, imports_pos))),
+    };
+
+    let header = HostedHeader {
+        before_name,
+        name,
+        exposes,
+        imports,
+    };
+    Ok((header, state))
 }
 
 pub(crate) fn chomp_module_name(buffer: &[u8]) -> Result<&str, Progress> {
@@ -312,17 +313,37 @@ pub(crate) fn parse_module_name(state: State<'_>) -> Result<(ModuleName<'_>, Sta
     }
 }
 
-#[inline(always)]
-fn app_header<'a>() -> impl Parser<'a, AppHeader<'a>, EHeader<'a>> {
-    record!(AppHeader {
-        before_provides: space0_e(EHeader::IndentStart),
-        provides: specialize_err(EHeader::Exposes, exposes_list()),
-        before_packages: space0_e(EHeader::IndentStart),
-        packages: specialize_err(EHeader::Packages, loc(packages_collection())),
-        old_imports: succeed(None),
-        old_provides_to_new_package: succeed(None),
-    })
-    .trace("app_header")
+fn app_header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> Result<(AppHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+    let (_, before_provides, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+    let pos = state.pos();
+    let (_, provides, state) = exposes_list()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, pos)))?;
+
+    let (_, before_packages, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+    let pos = state.pos();
+    let (_, packages, state) = packages_collection()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p, EHeader::Packages(fail, pos)))?;
+    let packages = state.loc(pos, packages);
+
+    let header = AppHeader {
+        before_provides,
+        provides,
+        before_packages,
+        packages,
+        old_imports: None,
+        old_provides_to_new_package: None,
+    };
+    Ok((header, state))
 }
 
 struct OldAppHeader<'a> {
@@ -335,16 +356,23 @@ struct OldAppHeader<'a> {
 type OldAppPackages<'a> =
     KeywordItem<'a, PackagesKeyword, Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>>;
 
-#[inline(always)]
-fn old_app_header<'a>() -> impl Parser<'a, AppHeader<'a>, EHeader<'a>> {
+fn old_app_header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> Result<(AppHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
     let old = record!(OldAppHeader {
-        before_name: skip_second(
-            space0_e(EHeader::IndentStart),
-            loc(crate::parser::specialize_err(
-                EHeader::AppName,
-                string_literal::parse_str_literal()
-            ))
-        ),
+        before_name: move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+            let (_, before_name, state) =
+                eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+            let pos = state.pos();
+            let (_, _, state) = string_literal::parse_str_literal()
+                .parse(arena, state, min_indent)
+                .map_err(|(p, fail)| (p, EHeader::AppName(fail, pos)))?;
+
+            Ok((MadeProgress, before_name, state))
+        },
         packages: move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
             let olds = state.clone();
             match packages().parse(arena, state, min_indent) {
@@ -361,13 +389,16 @@ fn old_app_header<'a>() -> impl Parser<'a, AppHeader<'a>, EHeader<'a>> {
                 Err((_, fail)) => Err((MadeProgress, EHeader::Imports(fail, olds.pos()))),
             }
         },
-        provides: specialize_err(EHeader::Provides, provides_to()),
+        provides: move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+            let pos = state.pos();
+            provides_to()
+                .parse(arena, state, min_indent)
+                .map_err(|(p, fail)| (p, EHeader::Provides(fail, pos)))
+        }
     });
 
-    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| match old
-        .parse(arena, state, min_indent)
-    {
-        Ok((p, old, state)) => {
+    match old.parse(arena, state, min_indent) {
+        Ok((_, old, state)) => {
             let mut before_packages: &'a [CommentOrNewline] = &[];
 
             let packages = match old.packages {
@@ -466,21 +497,41 @@ fn old_app_header<'a>() -> impl Parser<'a, AppHeader<'a>, EHeader<'a>> {
                 },
             };
 
-            Ok((p, out, state))
+            Ok((out, state))
         }
         Err(err) => Err(err),
     }
 }
 
-#[inline(always)]
-fn package_header<'a>() -> impl Parser<'a, PackageHeader<'a>, EHeader<'a>> {
-    record!(PackageHeader {
-        before_exposes: space0_e(EHeader::IndentStart),
-        exposes: specialize_err(EHeader::Exposes, exposes_module_collection()),
-        before_packages: space0_e(EHeader::IndentStart),
-        packages: specialize_err(EHeader::Packages, loc(packages_collection())),
-    })
-    .trace("package_header")
+fn package_header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> Result<(PackageHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+    let (_, before_exposes, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+    let pos = state.pos();
+    let (_, exposes, state) = exposes_module_collection()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p, EHeader::Exposes(fail, pos)))?;
+
+    let (_, before_packages, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+    let pos = state.pos();
+    let (_, packages, state) = packages_collection()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p, EHeader::Packages(fail, pos)))?;
+    let packages = state.loc(pos, packages);
+
+    let header = PackageHeader {
+        before_exposes,
+        exposes,
+        before_packages,
+        packages,
+    };
+    Ok((header, state))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -491,59 +542,106 @@ struct OldPackageHeader<'a> {
         Loc<KeywordItem<'a, PackagesKeyword, Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>>>,
 }
 
-#[inline(always)]
-fn old_package_header<'a>() -> impl Parser<'a, PackageHeader<'a>, EHeader<'a>> {
-    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| match record!(
-        OldPackageHeader {
-            before_name: skip_second(
-                space0_e(EHeader::IndentStart),
-                specialize_err(EHeader::PackageName, package_name())
-            ),
-            exposes: specialize_err(EHeader::Exposes, exposes_modules()),
-            packages: specialize_err(EHeader::Packages, loc(packages())),
-        }
-    )
-    .parse(arena, state, min_indent)
-    {
-        Ok((p, old, state)) => {
-            let before_exposes = merge_n_spaces!(
-                arena,
-                old.before_name,
-                old.exposes.keyword.before,
-                old.exposes.keyword.after
-            );
+fn old_package_header<'a>(
+    arena: &'a bumpalo::Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> Result<(PackageHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+    let (sp_err, before_name, state) =
+        eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
-            let before_packages = merge_spaces(
-                arena,
-                old.packages.value.keyword.before,
-                old.packages.value.keyword.after,
-            );
+    let pos = state.pos();
+    let (_, _, state) = package_name()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p.or(sp_err), EHeader::PackageName(fail, pos)))?;
 
-            let old = PackageHeader {
-                before_exposes,
-                exposes: old.exposes.item,
-                before_packages,
-                packages: old.packages.map(|kw| kw.item),
-            };
+    let pos = state.pos();
+    let (_, exposes, state) = exposes_modules()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p.or(sp_err), EHeader::Exposes(fail, pos)))?;
 
-            Ok((p, old, state))
-        }
-        Err(err) => Err(err),
-    }
+    let pos = state.pos();
+    let (_, packages, state) = packages()
+        .parse(arena, state, min_indent)
+        .map_err(|(p, fail)| (p.or(sp_err), EHeader::Packages(fail, pos)))?;
+    let packages = state.loc(pos, packages);
+
+    let old = OldPackageHeader {
+        before_name,
+        exposes,
+        packages,
+    };
+
+    let before_exposes = merge_n_spaces!(
+        arena,
+        old.before_name,
+        old.exposes.keyword.before,
+        old.exposes.keyword.after
+    );
+
+    let before_packages = merge_spaces(
+        arena,
+        old.packages.value.keyword.before,
+        old.packages.value.keyword.after,
+    );
+
+    let old = PackageHeader {
+        before_exposes,
+        exposes: old.exposes.item,
+        before_packages,
+        packages: old.packages.map(|kw| kw.item),
+    };
+
+    Ok((old, state))
 }
 
-#[inline(always)]
 fn platform_header<'a>() -> impl Parser<'a, PlatformHeader<'a>, EHeader<'a>> {
-    record!(PlatformHeader {
-        before_name: space0_e(EHeader::IndentStart),
-        name: loc(specialize_err(EHeader::PlatformName, package_name())),
-        requires: specialize_err(EHeader::Requires, requires()),
-        exposes: specialize_err(EHeader::Exposes, exposes_modules()),
-        packages: specialize_err(EHeader::Packages, packages()),
-        imports: specialize_err(EHeader::Imports, imports()),
-        provides: specialize_err(EHeader::Provides, provides_exposed()),
-    })
-    .trace("platform_header")
+    move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
+        let (_, before_name, state) =
+            eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
+
+        let pos = state.pos();
+        let (_, name, state) = package_name()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::PlatformName(fail, pos)))?;
+        let name = state.loc(pos, name);
+
+        let pos = state.pos();
+        let (_, requires, state) = requires()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::Requires(fail, pos)))?;
+
+        let pos = state.pos();
+        let (_, exposes, state) = exposes_modules()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::Exposes(fail, pos)))?;
+
+        let pos = state.pos();
+        let (_, packages, state) = packages()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::Packages(fail, pos)))?;
+
+        let pos = state.pos();
+        let (_, imports, state) = imports()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::Imports(fail, pos)))?;
+
+        let pos = state.pos();
+        let (_, provides, state) = provides_exposed()
+            .parse(arena, state, min_indent)
+            .map_err(|(p, fail)| (p, EHeader::Provides(fail, pos)))?;
+
+        let header = PlatformHeader {
+            before_name,
+            name,
+            requires,
+            exposes,
+            packages,
+            imports,
+            provides,
+        };
+        Ok((MadeProgress, header, state))
+    }
 }
 
 fn provides_to_package<'a>(
@@ -1007,10 +1105,10 @@ fn imports_entry<'a>(
             Err(_) => (None, state),
         };
 
-        let module_name_pos = state.pos();
+        let pos = state.pos();
         match parse_module_name(state) {
             Ok((module_name, state)) => Ok((MadeProgress, (name, module_name), state)),
-            Err(p) => Err((p, EImports::ModuleName(module_name_pos))),
+            Err(p) => Err((p, EImports::ModuleName(pos))),
         }
     };
 
@@ -1537,14 +1635,14 @@ pub fn parse_package_entry<'a>(
 
 pub fn package_name<'a>() -> impl Parser<'a, PackageName<'a>, EPackageName<'a>> {
     move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
-        let name_pos = state.pos();
+        let pos = state.pos();
         match string_literal::parse_str_literal().parse(arena, state, min_indent) {
             Ok((p, name, state)) => match name {
                 StrLiteral::PlainLine(text) => Ok((p, PackageName(text), state)),
-                StrLiteral::Line(_) => Err((p, EPackageName::Escapes(name_pos))),
-                StrLiteral::Block(_) => Err((p, EPackageName::Multiline(name_pos))),
+                StrLiteral::Line(_) => Err((p, EPackageName::Escapes(pos))),
+                StrLiteral::Block(_) => Err((p, EPackageName::Multiline(pos))),
             },
-            Err((p, fail)) => Err((p, EPackageName::BadPath(fail, name_pos))),
+            Err((p, fail)) => Err((p, EPackageName::BadPath(fail, pos))),
         }
     }
 }

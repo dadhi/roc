@@ -3,7 +3,7 @@ use crate::ast::Spaceable;
 use crate::parser::ParseResult;
 use crate::parser::Progress;
 use crate::parser::SpaceProblem;
-use crate::parser::{BadInputError, Parser, Progress::*};
+use crate::parser::{BadInputError, Progress::*};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
@@ -196,17 +196,6 @@ where
     Ok((ok_pr, sp, state))
 }
 
-pub fn space0_e<'a, E>(
-    indent_problem: fn(Position) -> E,
-) -> impl Parser<'a, &'a [CommentOrNewline<'a>], E>
-where
-    E: 'a + SpaceProblem,
-{
-    move |arena, state: State<'a>, min_indent: u32| {
-        eat_nc_check(indent_problem, arena, state, min_indent, false)
-    }
-}
-
 pub fn eat_nc_loc_c<'a, E>(
     indent_problem: fn(Position) -> E,
     arena: &'a Bump,
@@ -392,7 +381,7 @@ pub fn eat_nc_locs<'a>(
                     CommentOrNewline::LineComment(text)
                 };
                 state.advance_mut(len);
-                nc.push(Loc::pos(start, state.pos(), comment));
+                nc.push(state.loc(start, comment));
                 found_newline = true;
 
                 if begins_with_crlf(state.bytes()) {
@@ -406,12 +395,12 @@ pub fn eat_nc_locs<'a>(
                     return None;
                 }
                 state = state.advance_newline(2);
-                nc.push(Loc::pos(start, state.pos(), CommentOrNewline::Newline));
+                nc.push(state.loc(start, CommentOrNewline::Newline));
                 found_newline = true;
             }
             Some(b'\n') => {
                 state = state.advance_newline(1);
-                nc.push(Loc::pos(start, state.pos(), CommentOrNewline::Newline));
+                nc.push(state.loc(start, CommentOrNewline::Newline));
                 found_newline = true;
             }
             Some(b'\t') => {

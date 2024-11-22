@@ -118,7 +118,7 @@ fn rest_of_expr_in_parens_etc<'a>(
     }
 
     let mut loc_elems = if elems.len() > 1 {
-        Loc::pos(start, state.pos(), Expr::Tuple(elems.ptrify_items(arena)))
+        state.loc(start, Expr::Tuple(elems.ptrify_items(arena)))
     } else {
         // TODO: don't discard comments before/after (stored in the Collection)
         Loc::at(
@@ -133,7 +133,7 @@ fn rest_of_expr_in_parens_etc<'a>(
     // otherwise, don't include the parentheses
     if !suffixes.is_empty() {
         let elems = apply_access_chain(arena, loc_elems.value, suffixes);
-        loc_elems = Loc::pos(start, state.pos(), elems)
+        loc_elems = state.loc(start, elems)
     };
 
     Ok((loc_elems, state))
@@ -1811,7 +1811,7 @@ fn parse_expr_end<'a>(
                         // the chain of operators finishes at the when statement,
                         // so their value will be the condition/value for the when pattern matching
                         let ops_val = finalize_expr(expr_state, arena);
-                        let ops_val = Loc::pos(start, state.pos(), ops_val);
+                        let ops_val = state.loc(start, ops_val);
 
                         let when_pos = state.pos();
                         let cond = Some((ops_val, WhenShortcut::BinOp));
@@ -2483,7 +2483,6 @@ mod when {
         blankspace::eat_nc,
     };
 
-    /// If Ok it always returns MadeProgress
     pub fn rest_of_when_expr<'a>(
         cond: Option<(Loc<Expr<'a>>, WhenShortcut)>,
         flags: ExprParseFlags,
@@ -2511,8 +2510,7 @@ mod when {
             if !at_keyword(keyword::IS, &state) {
                 return Err((MadeProgress, EWhen::Is(state.pos())));
             }
-
-            (None, cond, state.advance(keyword::IS.len()))
+            (None, cond, state.inc_len(keyword::IS))
         };
 
         // Note that we allow the `is` to be at any indent level, since this doesn't introduce any
@@ -3528,7 +3526,7 @@ fn rest_of_list_expr<'a>(
     };
 
     let (elems, state) = collection_inner(arena, state, elem_p, Expr::SpaceBefore)
-        .map_err(|(p, fail)| (p, EExpr::List(fail, start)))?;
+        .map_err(|(_, fail)| (MadeProgress, EExpr::List(fail, start)))?;
 
     if state.bytes().first() != Some(&b']') {
         let fail = EList::End(state.pos());

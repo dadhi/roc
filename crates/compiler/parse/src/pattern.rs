@@ -4,11 +4,8 @@ use crate::expr::{parse_expr_start, CHECK_FOR_ARROW};
 use crate::ident::{chomp_lowercase_part, parse_ident_chain, parse_lowercase_ident, Ident};
 use crate::keyword;
 use crate::number_literal::parse_number_base;
-use crate::parser::{
-    at_keyword,
-    Progress::{self, *},
-};
-use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord};
+use crate::parser::{at_keyword, Progress::*};
+use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord, ParseResult};
 use crate::state::State;
 use crate::string_literal::{rest_of_str_like, StrLikeLiteral};
 use bumpalo::collections::string::String;
@@ -33,7 +30,7 @@ pub fn parse_closure_param<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     if let Some(b) = state.bytes().first() {
         let start = state.pos();
         match b {
@@ -57,7 +54,7 @@ pub fn parse_pattern<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     let (pattern, state) = parse_loc_pattern_etc(true, arena, state, min_indent)?;
 
     let pattern_state = state.clone();
@@ -86,7 +83,7 @@ fn parse_loc_pattern_etc<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     if let Some(b) = state.bytes().first() {
         let start = state.pos();
         match b {
@@ -130,7 +127,7 @@ fn parse_pattern_as<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(PatternAs<'a>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, PatternAs<'a>, EPattern<'a>> {
     if !at_keyword(keyword::AS, &state) {
         return Err((NoProgress, EPattern::AsKeyword(state.pos())));
     }
@@ -159,7 +156,7 @@ fn type_tag_or_def_tag_pattern_args<'a>(
     arena: &'a Bump,
     mut state: State<'a>,
     min_indent: u32,
-) -> Result<(Vec<'a, Loc<Pattern<'a>>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Vec<'a, Loc<Pattern<'a>>>, EPattern<'a>> {
     let mut patterns = Vec::with_capacity_in(1, arena);
     loop {
         let prev = state.clone();
@@ -200,7 +197,7 @@ fn rest_of_pattern_in_parens<'a>(
     start: Position,
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     let elem_p = move |a: &'a Bump, state: State<'a>| {
         let pos = state.pos();
         parse_pattern(a, state, 0).map_err(|(p, fail)| (p, PInParens::Pattern(a.alloc(fail), pos)))
@@ -251,7 +248,7 @@ fn rest_of_list_pattern<'a>(
     start: Position,
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     let (elems, state) = collection_inner(arena, state, list_element_pattern, Pattern::SpaceBefore)
         .map_err(|(_, fail)| (MadeProgress, EPattern::List(fail, start)))?;
 
@@ -266,7 +263,7 @@ fn rest_of_list_pattern<'a>(
 fn list_element_pattern<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, PList<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, PList<'a>> {
     let start = state.pos();
     if state.bytes().starts_with(b"...") {
         return Err((MadeProgress, PList::Rest(start)));
@@ -283,7 +280,7 @@ fn parse_list_rest_pattern<'a>(
     start: Position,
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, PList<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, PList<'a>> {
     if !state.bytes().starts_with(b"..") {
         return Err((NoProgress, PList::Open(start)));
     }
@@ -317,11 +314,9 @@ fn parse_ident_pattern<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
-    let (ident, state) = match parse_ident_chain(arena, state) {
-        Ok(ok) => ok,
-        Err((p, _)) => return Err((p, EPattern::Start(start))),
-    };
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
+    let (ident, state) =
+        parse_ident_chain(arena, state).map_err(|(p, _)| (p, EPattern::Start(start)))?;
 
     let ident_loc = Region::new(start, state.pos());
     match ident {
@@ -405,7 +400,7 @@ fn parse_ident_pattern<'a>(
 fn rest_of_underscore_pattern(
     start: Position,
     state: State<'_>,
-) -> Result<(Loc<Pattern<'_>>, State<'_>), (Progress, EPattern<'_>)> {
+) -> ParseResult<'_, Loc<Pattern<'_>>, EPattern<'_>> {
     let (name, state) = match chomp_lowercase_part(state.bytes()) {
         Ok((name, _)) => (name, state.inc_len(name)),
         Err(NoProgress) => ("", state),
@@ -419,7 +414,7 @@ fn rest_of_record_pattern<'a>(
     start: Position,
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, EPattern<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, EPattern<'a>> {
     let elem_p = parse_record_pattern_field;
     let (fields, state) = collection_inner(arena, state, elem_p, Pattern::SpaceBefore)
         .map_err(|(_, fail)| (MadeProgress, EPattern::Record(fail, start)))?;
@@ -437,7 +432,7 @@ fn rest_of_record_pattern<'a>(
 pub fn parse_record_pattern_fields<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Collection<'a, Loc<Pattern<'a>>>, State<'a>), (Progress, PRecord<'a>)> {
+) -> ParseResult<'a, Collection<'a, Loc<Pattern<'a>>>, PRecord<'a>> {
     if state.bytes().first() != Some(&b'{') {
         return Err((NoProgress, PRecord::Open(state.pos())));
     }
@@ -455,7 +450,7 @@ pub fn parse_record_pattern_fields<'a>(
 fn parse_record_pattern_field<'a>(
     a: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Pattern<'a>>, State<'a>), (Progress, PRecord<'a>)> {
+) -> ParseResult<'a, Loc<Pattern<'a>>, PRecord<'a>> {
     // You must have a field name, e.g. "email"
     // using the initial pos is important for error reporting
     let start = state.pos();

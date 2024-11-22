@@ -173,13 +173,14 @@ pub fn fast_eat_until_control_character(bytes: &[u8]) -> usize {
 }
 
 /// Eat NewLines and Comments with ident check
+#[allow(clippy::type_complexity)]
 pub fn eat_nc_check<'a, E>(
     indent_problem: fn(Position) -> E,
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
     err_made_progress: bool,
-) -> ParseResult<'a, &'a [CommentOrNewline<'a>], E>
+) -> Result<(Progress, &'a [CommentOrNewline<'a>], State<'a>), (Progress, E)>
 where
     E: 'a + SpaceProblem,
 {
@@ -202,7 +203,7 @@ pub fn eat_nc_loc_c<'a, E>(
     state: State<'a>,
     min_indent: u32,
     err_made_progress: bool,
-) -> Result<(Loc<&'a [CommentOrNewline<'a>]>, State<'a>), (Progress, E)>
+) -> ParseResult<'a, Loc<&'a [CommentOrNewline<'a>]>, E>
 where
     E: 'a + SpaceProblem,
 {

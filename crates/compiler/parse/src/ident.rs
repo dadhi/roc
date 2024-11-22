@@ -1,7 +1,7 @@
 use crate::ast::{Spaced, TryTarget};
 use crate::keyword::is_keyword;
-use crate::parser::EExpr;
 use crate::parser::Progress::{self, *};
+use crate::parser::{EExpr, ParseResult};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
@@ -79,9 +79,10 @@ pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Prog
 /// * A module name
 /// * A type name
 /// * A tag
-pub fn uppercase<'a>(
-    state: State<'a>,
-) -> Result<(Loc<Spaced<'a, UppercaseIdent<'a>>>, State<'a>), Progress> {
+#[inline(always)]
+pub fn uppercase(
+    state: State<'_>,
+) -> Result<(Loc<Spaced<UppercaseIdent<'_>>>, State<'_>), Progress> {
     let start = state.pos();
     match chomp_uppercase_part(state.bytes()) {
         Err(p) => Err(p),
@@ -365,7 +366,7 @@ fn chomp_opaque_ref(buffer: &[u8], pos: Position) -> Result<&str, BadIdent> {
 pub fn parse_ident_chain<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Ident<'a>, State<'a>), (Progress, EExpr<'a>)> {
+) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
     let start = state.pos();
     let bytes = state.bytes();
     let first_is_uppercase;

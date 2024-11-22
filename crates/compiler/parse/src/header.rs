@@ -10,7 +10,8 @@ use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseId
 use crate::parser::Progress::{self, *};
 use crate::parser::{
     at_keyword, collection_inner, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
-    EPackages, EParams, EProvides, ERequires, ETypedIdent, SourceError, SpaceProblem, SyntaxError,
+    EPackages, EParams, EProvides, ERequires, ETypedIdent, ParseResult, SourceError, SpaceProblem,
+    SyntaxError,
 };
 use crate::pattern::parse_record_pattern_fields;
 use crate::state::State;
@@ -41,16 +42,13 @@ pub fn parse_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
 ) -> Result<(SpacesBefore<'a, Header<'a>>, State<'a>), SourceError<'a, EHeader<'a>>> {
-    match header(arena, state.clone()) {
-        Ok((module, state)) => Ok((module, state)),
-        Err((_, fail)) => Err(SourceError::new(fail, &state)),
-    }
+    header(arena, state.clone()).map_err(|(_, fail)| (SourceError::new(fail, &state)))
 }
 
 pub fn header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(SpacesBefore<'a, Header<'a>>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, SpacesBefore<'a, Header<'a>>, EHeader<'a>> {
     let (_, before, state) = eat_nc_check(EHeader::IndentStart, arena, state, 0, false)?;
 
     let inc_indent = 1;
@@ -111,7 +109,7 @@ fn parse_module_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(ModuleHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, ModuleHeader<'a>, EHeader<'a>> {
     let (_, after_keyword, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -139,7 +137,7 @@ fn parse_module_params<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(ModuleParams<'a>, State<'a>), (Progress, EParams<'a>)> {
+) -> ParseResult<'a, ModuleParams<'a>, EParams<'a>> {
     let start = state.pos();
 
     let (pattern, state) = match parse_record_pattern_fields(arena, state) {
@@ -184,7 +182,7 @@ fn interface_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(ModuleHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, ModuleHeader<'a>, EHeader<'a>> {
     let (sp_err, before_name, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -231,7 +229,7 @@ fn hosted_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(HostedHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, HostedHeader<'a>, EHeader<'a>> {
     let (_, before_name, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -322,7 +320,7 @@ fn app_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(AppHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, AppHeader<'a>, EHeader<'a>> {
     let (_, before_provides, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -363,7 +361,7 @@ fn old_app_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(AppHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, AppHeader<'a>, EHeader<'a>> {
     let old = move |arena: &'a bumpalo::Bump, state: State<'a>, min_indent: u32| {
         let (_, before_name, state) =
             eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
@@ -509,7 +507,7 @@ fn package_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(PackageHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, PackageHeader<'a>, EHeader<'a>> {
     let (_, before_exposes, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -546,7 +544,7 @@ fn old_package_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(PackageHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, PackageHeader<'a>, EHeader<'a>> {
     let (sp_err, before_name, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -596,7 +594,7 @@ fn platform_header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(PlatformHeader<'a>, State<'a>), (Progress, EHeader<'a>)> {
+) -> ParseResult<'a, PlatformHeader<'a>, EHeader<'a>> {
     let (_, before_name, state) =
         eat_nc_check(EHeader::IndentStart, arena, state, min_indent, false)?;
 
@@ -640,7 +638,7 @@ fn platform_header<'a>(
 fn provides_to_package<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(To<'a>, State<'a>), (Progress, EProvides<'a>)> {
+) -> ParseResult<'a, To<'a>, EProvides<'a>> {
     let pos = state.pos();
     match parse_lowercase_ident(state.clone()) {
         Ok((out, state)) => Ok((To::ExistingPackage(out), state)),
@@ -656,7 +654,7 @@ fn provides_to<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(ProvidesTo<'a>, State<'a>), (Progress, EProvides<'a>)> {
+) -> ParseResult<'a, ProvidesTo<'a>, EProvides<'a>> {
     let (provides_keyword, state) = spaces_around_keyword(
         arena,
         state,
@@ -707,16 +705,15 @@ fn provides_to<'a>(
     Ok((provides_to, state))
 }
 
+#[allow(clippy::type_complexity)]
 fn provides_exposed<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<
-    (
-        KeywordItem<'a, ProvidesKeyword, Collection<'a, Loc<Spaced<'a, ExposedName<'a>>>>>,
-        State<'a>,
-    ),
-    (Progress, EProvides<'a>),
+) -> ParseResult<
+    'a,
+    KeywordItem<'a, ProvidesKeyword, Collection<'a, Loc<Spaced<'a, ExposedName<'a>>>>>,
+    EProvides<'a>,
 > {
     let (keyword, state) = spaces_around_keyword(
         arena,
@@ -740,16 +737,11 @@ fn provides_exposed<'a>(
     Ok((KeywordItem { keyword, item }, state.inc()))
 }
 
+#[allow(clippy::type_complexity)]
 fn provides_types<'a>(
     arena: &'a bumpalo::Bump,
     mut state: State<'a>,
-) -> Result<
-    (
-        Collection<'a, Loc<Spaced<'a, UppercaseIdent<'a>>>>,
-        State<'a>,
-    ),
-    (Progress, EProvides<'a>),
-> {
+) -> ParseResult<'a, Collection<'a, Loc<Spaced<'a, UppercaseIdent<'a>>>>, EProvides<'a>> {
     // We only support spaces here, not newlines, because this is not intended
     // to be the design forever. Someday it will hopefully work like Elm,
     // where platform authors can provide functions like Browser.sandbox which
@@ -780,7 +772,7 @@ fn provides_types<'a>(
 fn provides_ident<'a>(
     _: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Loc<Spaced<'a, ExposedName<'a>>>, State<'a>), (Progress, EProvides<'a>)> {
+) -> ParseResult<'a, Loc<Spaced<'a, ExposedName<'a>>>, EProvides<'a>> {
     let ident_pos = state.pos();
     match parse_anycase_ident(state) {
         Ok((ident, state)) => {
@@ -794,7 +786,7 @@ fn provides_ident<'a>(
 fn exposes_ident<'a>(
     _: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Loc<Spaced<'a, ExposedName<'a>>>, State<'a>), (Progress, EExposes)> {
+) -> ParseResult<'a, Loc<Spaced<'a, ExposedName<'a>>>, EExposes> {
     let ident_pos = state.pos();
     match parse_anycase_ident(state) {
         Ok((ident, state)) => {
@@ -808,7 +800,7 @@ fn exposes_ident<'a>(
 fn imports_ident<'a>(
     _: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Loc<Spaced<'a, ExposedName<'a>>>, State<'a>), (Progress, EImports)> {
+) -> ParseResult<'a, Loc<Spaced<'a, ExposedName<'a>>>, EImports> {
     let ident_pos = state.pos();
     match parse_anycase_ident(state) {
         Ok((ident, state)) => {
@@ -885,7 +877,7 @@ fn requires<'a>(
 fn exposes_list<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Collection<'a, Loc<Spaced<'a, ExposedName<'a>>>>, State<'a>), (Progress, EExposes)> {
+) -> ParseResult<'a, Collection<'a, Loc<Spaced<'a, ExposedName<'a>>>>, EExposes> {
     if state.bytes().first() != Some(&b'[') {
         return Err((NoProgress, EExposes::ListStart(state.pos())));
     }
@@ -906,7 +898,7 @@ pub fn spaces_around_keyword<'a, K: Keyword, E>(
     expectation: fn(Position) -> E,
     indent_problem1: fn(Position) -> E,
     indent_problem2: fn(Position) -> E,
-) -> Result<(Spaces<'a, K>, State<'a>), (Progress, E)>
+) -> ParseResult<'a, Spaces<'a, K>, E>
 where
     E: 'a + SpaceProblem,
 {
@@ -930,16 +922,15 @@ where
     Ok((spaced_keyword, state))
 }
 
+#[allow(clippy::type_complexity)]
 fn exposes_modules<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<
-    (
-        KeywordItem<'a, ExposesKeyword, Collection<'a, Loc<Spaced<'a, ModuleName<'a>>>>>,
-        State<'a>,
-    ),
-    (Progress, EExposes),
+) -> ParseResult<
+    'a,
+    KeywordItem<'a, ExposesKeyword, Collection<'a, Loc<Spaced<'a, ModuleName<'a>>>>>,
+    EExposes,
 > {
     let (keyword, state) = spaces_around_keyword(
         arena,
@@ -959,7 +950,7 @@ fn exposes_modules<'a>(
 fn exposes_module_collection<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Collection<'a, Loc<Spaced<'a, ModuleName<'a>>>>, State<'a>), (Progress, EExposes)> {
+) -> ParseResult<'a, Collection<'a, Loc<Spaced<'a, ModuleName<'a>>>>, EExposes> {
     if state.bytes().first() != Some(&b'[') {
         return Err((NoProgress, EExposes::ListStart(state.pos())));
     }
@@ -984,16 +975,15 @@ fn exposes_module_collection<'a>(
     Ok((items, state.inc()))
 }
 
+#[allow(clippy::type_complexity)]
 fn packages<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<
-    (
-        KeywordItem<'a, PackagesKeyword, Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>>,
-        State<'a>,
-    ),
-    (Progress, EPackages<'a>),
+) -> ParseResult<
+    'a,
+    KeywordItem<'a, PackagesKeyword, Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>>,
+    EPackages<'a>,
 > {
     let (keyword, state) = spaces_around_keyword(
         arena,
@@ -1012,8 +1002,7 @@ fn packages<'a>(
 fn packages_collection<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>, State<'a>), (Progress, EPackages<'a>)>
-{
+) -> ParseResult<'a, Collection<'a, Loc<Spaced<'a, PackageEntry<'a>>>>, EPackages<'a>> {
     if state.bytes().first() != Some(&b'{') {
         return Err((NoProgress, EPackages::ListStart(state.pos())));
     }
@@ -1034,16 +1023,15 @@ fn packages_collection<'a>(
     Ok((entries, state.inc()))
 }
 
+#[allow(clippy::type_complexity)]
 fn imports<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<
-    (
-        KeywordItem<'a, ImportsKeyword, Collection<'a, Loc<Spaced<'a, ImportsEntry<'a>>>>>,
-        State<'a>,
-    ),
-    (Progress, EImports),
+) -> ParseResult<
+    'a,
+    KeywordItem<'a, ImportsKeyword, Collection<'a, Loc<Spaced<'a, ImportsEntry<'a>>>>>,
+    EImports,
 > {
     let (keyword, state) = spaces_around_keyword(
         arena,
@@ -1072,7 +1060,7 @@ pub fn parse_typed_ident<'a>(
     start: Position,
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Spaced<'a, TypedIdent<'a>>, State<'a>), (Progress, ETypedIdent<'a>)> {
+) -> ParseResult<'a, Spaced<'a, TypedIdent<'a>>, ETypedIdent<'a>> {
     let (ident, state) =
         parse_lowercase_ident(state).map_err(|p| (p, ETypedIdent::Identifier(start)))?;
     let ident = state.loc(start, ident);
@@ -1110,7 +1098,7 @@ pub fn parse_typed_ident<'a>(
 fn imports_entry<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Loc<Spaced<'a, ImportsEntry<'a>>>, State<'a>), (Progress, EImports)> {
+) -> ParseResult<'a, Loc<Spaced<'a, ImportsEntry<'a>>>, EImports> {
     let start = state.pos();
     let p_name_module_name = move |state: State<'a>| {
         let (name, state) = match parse_lowercase_ident(state.clone()) {
@@ -1584,7 +1572,7 @@ pub struct PackageEntry<'a> {
 pub fn parse_package_entry<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(Spaced<'a, PackageEntry<'a>>, State<'a>), (Progress, EPackageEntry<'a>)> {
+) -> ParseResult<'a, Spaced<'a, PackageEntry<'a>>, EPackageEntry<'a>> {
     let shorthand_p = move |arena: &'a bumpalo::Bump, state: State<'a>| {
         let ident_pos = state.pos();
         let (ident, state) = match parse_lowercase_ident(state.clone()) {
@@ -1653,7 +1641,7 @@ pub fn parse_package_entry<'a>(
 pub fn package_name<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
-) -> Result<(PackageName<'a>, State<'a>), (Progress, EPackageName<'a>)> {
+) -> ParseResult<'a, PackageName<'a>, EPackageName<'a>> {
     let pos = state.pos();
     match string_literal::parse_str_literal(arena, state) {
         Ok((p, name, state)) => match name {

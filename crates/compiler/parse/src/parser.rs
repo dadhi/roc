@@ -17,7 +17,7 @@ pub enum Either<First, Second> {
 
 impl<F: Copy, S: Copy> Copy for Either<F, S> {}
 
-pub type ParseResult<'a, Output, Error> = Result<(Progress, Output, State<'a>), (Progress, Error)>;
+pub type ParseResult<'a, Output, Error> = Result<(Output, State<'a>), (Progress, Error)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Progress {
@@ -725,9 +725,9 @@ pub fn at_keyword(kw: &'static str, state: &State<'_>) -> bool {
 pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a + SpaceProblem>(
     arena: &'a Bump,
     state: State<'a>,
-    elem_p: impl Fn(&'a Bump, State<'a>) -> Result<(Loc<Elem>, State<'a>), (Progress, E)> + 'a,
+    elem_p: impl Fn(&'a Bump, State<'a>) -> ParseResult<'a, Loc<Elem>, E> + 'a,
     space_before: impl Fn(&'a Elem, &'a [crate::ast::CommentOrNewline<'a>]) -> Elem,
-) -> Result<(crate::ast::Collection<'a, Loc<Elem>>, State<'a>), (Progress, E)> {
+) -> ParseResult<'a, crate::ast::Collection<'a, Loc<Elem>>, E> {
     let (_, (first_spaces, _), state) = eat_nc(arena, state, true)?;
 
     let (first_item, state) = match elem_p(arena, state.clone()) {

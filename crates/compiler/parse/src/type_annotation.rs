@@ -8,10 +8,10 @@ use crate::ident::{
     chomp_concrete_type, chomp_lowercase_part, chomp_uppercase_part, parse_lowercase_ident,
 };
 use crate::keyword::{self, is_keyword};
+use crate::parser::ParseResult;
 use crate::parser::{
     at_keyword, collection_inner, ERecord, EType, ETypeApply, ETypeInParens, ETypeInlineAlias,
-    ETypeRecord, ETypeTagUnion,
-    Progress::{self, *},
+    ETypeRecord, ETypeTagUnion, Progress::*,
 };
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
@@ -23,7 +23,7 @@ fn rest_of_tag_union_type<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(TypeAnnotation<'a>, State<'a>), (Progress, ETypeTagUnion<'a>)> {
+) -> ParseResult<'a, TypeAnnotation<'a>, ETypeTagUnion<'a>> {
     let (tags, state) = collection_inner(arena, state, parse_tag_type, Tag::SpaceBefore)?;
 
     if state.bytes().first() != Some(&b']') {
@@ -77,7 +77,7 @@ fn parse_term<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<TypeAnnotation<'a>>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, Loc<TypeAnnotation<'a>>, EType<'a>> {
     let parse_applied_arg = flags.is_set(PARSE_APPLIED_ARG);
     let flags = flags.without(PARSE_APPLIED_ARG);
 
@@ -202,7 +202,7 @@ fn rest_of_type_in_parens<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<TypeAnnotation<'a>>, State<'a>), (Progress, ETypeInParens<'a>)> {
+) -> ParseResult<'a, Loc<TypeAnnotation<'a>>, ETypeInParens<'a>> {
     let elem_p = move |a: &'a Bump, state: State<'a>| {
         let type_pos = state.pos();
         parse_type_expr(
@@ -245,7 +245,7 @@ fn rest_of_type_in_parens<'a>(
 fn parse_tag_type<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<Tag<'a>>, State<'a>), (Progress, ETypeTagUnion<'a>)> {
+) -> ParseResult<'a, Loc<Tag<'a>>, ETypeTagUnion<'a>> {
     let start = state.pos();
     let (name, state) = match chomp_uppercase_part(state.bytes()) {
         Ok(out) => (out, state.inc_len(out)),
@@ -293,7 +293,7 @@ fn parse_tag_type<'a>(
 fn record_type_field<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<AssignedField<'a, TypeAnnotation<'a>>>, State<'a>), (Progress, ETypeRecord<'a>)> {
+) -> ParseResult<'a, Loc<AssignedField<'a, TypeAnnotation<'a>>>, ETypeRecord<'a>> {
     use AssignedField::*;
 
     // You must have a field name, e.g. "email"
@@ -369,7 +369,7 @@ fn rest_of_record_type<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(TypeAnnotation<'a>, State<'a>), (Progress, ETypeRecord<'a>)> {
+) -> ParseResult<'a, TypeAnnotation<'a>, ETypeRecord<'a>> {
     let (fields, state) =
         collection_inner(arena, state, record_type_field, AssignedField::SpaceBefore)?;
 
@@ -395,7 +395,7 @@ fn parse_applied_type<'a>(
     flags: TypeExprFlags,
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(TypeAnnotation<'a>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, TypeAnnotation<'a>, EType<'a>> {
     let start_indent = state.line_indent();
     let start = state.pos();
     let (ctor, state) = match parse_concrete_type(state) {
@@ -454,7 +454,7 @@ fn parse_implements_clause<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<ImplementsClause<'a>>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, Loc<ImplementsClause<'a>>, EType<'a>> {
     let (sp_p, spaces_before, state) =
         eat_nc_check(EType::TIndentStart, arena, state, min_indent, false)?;
 
@@ -531,7 +531,7 @@ pub fn parse_implements_abilities<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<ImplementsAbilities<'a>>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, Loc<ImplementsAbilities<'a>>, EType<'a>> {
     if !state.bytes().starts_with(keyword::IMPLEMENTS.as_bytes()) {
         return Err((NoProgress, EType::TImplementsClause(state.pos())));
     }
@@ -564,7 +564,7 @@ pub fn parse_implements_abilities<'a>(
 fn parse_implements_ability<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<ImplementsAbility<'a>>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, Loc<ImplementsAbility<'a>>, EType<'a>> {
     let start = state.pos();
     let (type_ann, state) =
         parse_concrete_type(state).map_err(|(p, fail)| (p, EType::TApply(fail, start)))?;
@@ -604,7 +604,7 @@ fn parse_implements_ability<'a>(
 fn ability_impl_field<'a>(
     arena: &'a Bump,
     state: State<'a>,
-) -> Result<(Loc<AssignedField<'a, Expr<'a>>>, State<'a>), (Progress, ERecord<'a>)> {
+) -> ParseResult<'a, Loc<AssignedField<'a, Expr<'a>>>, ERecord<'a>> {
     let start = state.pos();
     let (field, state) = parse_record_field(arena, state)?;
     match field.to_assigned_field(arena) {
@@ -645,10 +645,9 @@ pub(crate) fn parse_type_expr<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> Result<(Loc<TypeAnnotation<'a>>, State<'a>), (Progress, EType<'a>)> {
+) -> ParseResult<'a, Loc<TypeAnnotation<'a>>, EType<'a>> {
     let (first_type, state) = if flags.is_set(SKIP_PARSING_SPACES_BEFORE) {
-        let first_res = parse_term(flags, arena, state, min_indent)?;
-        first_res
+        parse_term(flags, arena, state, min_indent)?
     } else {
         let (sp_p, spaces_before, state) =
             eat_nc_check(EType::TIndentStart, arena, state, min_indent, false)?;
@@ -835,9 +834,7 @@ pub(crate) fn parse_type_expr<'a>(
 // /// A bound type variable, e.g. `a` in `(a -> a)`
 // BoundVariable(&'a str),
 
-fn parse_concrete_type(
-    state: State<'_>,
-) -> Result<(TypeAnnotation<'_>, State<'_>), (Progress, ETypeApply)> {
+fn parse_concrete_type(state: State<'_>) -> ParseResult<'_, TypeAnnotation<'_>, ETypeApply> {
     let initial_bytes = state.bytes();
 
     match chomp_concrete_type(state.bytes()) {

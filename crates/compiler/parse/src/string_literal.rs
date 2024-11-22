@@ -2,7 +2,7 @@ use crate::ast::{EscapedChar, SingleQuoteLiteral, StrLiteral, StrSegment};
 use crate::blankspace::{eat_nc, SpacedBuilder};
 use crate::expr::{parse_expr_start, ACCEPT_MULTI_BACKPASSING, CHECK_FOR_ARROW};
 use crate::parser::Progress::{self, *};
-use crate::parser::{BadInputError, ESingleQuote, EString};
+use crate::parser::{BadInputError, ESingleQuote, EString, ParseResult};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
@@ -12,7 +12,7 @@ use bumpalo::Bump;
 fn ascii_hex_digits<'a>(
     arena: &'a Bump,
     mut state: State<'a>,
-) -> Result<(&'a str, State<'a>), (Progress, EString<'a>)> {
+) -> ParseResult<'a, &'a str, EString<'a>> {
     let mut buf = bumpalo::collections::String::new_in(arena);
 
     for &byte in state.bytes().iter() {
@@ -103,7 +103,7 @@ pub fn rest_of_str_like<'a>(
     column: u32,
     arena: &'a Bump,
     mut state: State<'a>,
-) -> Result<(StrLikeLiteral<'a>, State<'a>), (Progress, EString<'a>)> {
+) -> ParseResult<'a, StrLikeLiteral<'a>, EString<'a>> {
     let mut is_multiline = false;
     let start_state;
     if state.bytes().starts_with(b"\"\"") {

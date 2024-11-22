@@ -1,5 +1,5 @@
 use crate::ast::Base;
-use crate::parser::{ENumber, Progress};
+use crate::parser::{ENumber, ParseResult, Progress};
 use crate::state::State;
 
 pub enum NumLiteral<'a> {
@@ -16,7 +16,7 @@ pub fn parse_number_base<'a>(
     is_negated: bool,
     bytes: &'a [u8],
     state: State<'a>,
-) -> Result<(NumLiteral<'a>, State<'a>), (Progress, ENumber)> {
+) -> ParseResult<'a, NumLiteral<'a>, ENumber> {
     match bytes.get(0..2) {
         Some(b"0b") => chomp_number_base(Base::Binary, is_negated, &bytes[2..], state),
         Some(b"0o") => chomp_number_base(Base::Octal, is_negated, &bytes[2..], state),
@@ -30,7 +30,7 @@ fn chomp_number_base<'a>(
     is_negative: bool,
     bytes: &'a [u8],
     state: State<'a>,
-) -> Result<(NumLiteral<'a>, State<'a>), (Progress, ENumber)> {
+) -> ParseResult<'a, NumLiteral<'a>, ENumber> {
     let (_, chomped) = chomp_number(bytes);
 
     let string = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
@@ -48,7 +48,7 @@ fn chomp_number_dec<'a>(
     is_negative: bool,
     bytes: &'a [u8],
     state: State<'a>,
-) -> Result<(NumLiteral<'a>, State<'a>), (Progress, ENumber)> {
+) -> ParseResult<'a, NumLiteral<'a>, ENumber> {
     let (is_float, chomped) = chomp_number(bytes);
 
     if is_negative && chomped == 0 {

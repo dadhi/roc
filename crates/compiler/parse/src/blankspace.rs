@@ -236,7 +236,7 @@ where
     loop {
         let whitespace = fast_eat_whitespace(state.bytes());
         if whitespace > 0 {
-            state.advance_mut(whitespace);
+            state.leap_mut(whitespace);
             p = MadeProgress;
         }
 
@@ -266,7 +266,7 @@ where
                 } else {
                     CommentOrNewline::LineComment(text)
                 };
-                state.advance_mut(len);
+                state.leap_mut(len);
                 nc.push(comment);
                 found_newline = true;
 
@@ -276,9 +276,9 @@ where
                 };
 
                 if begins_with_crlf(state.bytes()) {
-                    state = state.advance_newline(2);
+                    state = state.leap_newline(2);
                 } else if state.bytes().first() == Some(&b'\n') {
-                    state = state.advance_newline(1);
+                    state = state.leap_newline(1);
                 }
 
                 p = MadeProgress;
@@ -290,13 +290,13 @@ where
                         E::space_problem(BadInputError::HasMisplacedCarriageReturn, state.pos()),
                     ));
                 }
-                state = state.advance_newline(2);
+                state = state.leap_newline(2);
                 nc.push(CommentOrNewline::Newline);
                 found_newline = true;
                 p = MadeProgress;
             }
             Some(b'\n') => {
-                state = state.advance_newline(1);
+                state = state.leap_newline(1);
                 nc.push(CommentOrNewline::Newline);
                 found_newline = true;
                 p = MadeProgress;
@@ -352,21 +352,21 @@ pub fn eat_nc_locs<'a>(
     loop {
         let whitespace = fast_eat_whitespace(state.bytes());
         if whitespace > 0 {
-            state.advance_mut(whitespace);
+            state.leap_mut(whitespace);
         }
 
         let start = state.pos();
         match state.bytes().first() {
             Some(b'#') => {
-                state.advance_mut(1);
+                state.leap_mut(1);
 
                 let is_doc_comment =
                     state.bytes().first() == Some(&b'#') && state.bytes().get(1) != Some(&b'#');
 
                 if is_doc_comment {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     if state.bytes().first() == Some(&b' ') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                     }
                 }
 
@@ -381,26 +381,26 @@ pub fn eat_nc_locs<'a>(
                 } else {
                     CommentOrNewline::LineComment(text)
                 };
-                state.advance_mut(len);
+                state.leap_mut(len);
                 nc.push(state.loc(start, comment));
                 found_newline = true;
 
                 if begins_with_crlf(state.bytes()) {
-                    state = state.advance_newline(2);
+                    state = state.leap_newline(2);
                 } else if state.bytes().first() == Some(&b'\n') {
-                    state = state.advance_newline(1);
+                    state = state.leap_newline(1);
                 }
             }
             Some(b'\r') => {
                 if state.bytes().get(1) != Some(&b'\n') {
                     return None;
                 }
-                state = state.advance_newline(2);
+                state = state.leap_newline(2);
                 nc.push(state.loc(start, CommentOrNewline::Newline));
                 found_newline = true;
             }
             Some(b'\n') => {
-                state = state.advance_newline(1);
+                state = state.leap_newline(1);
                 nc.push(state.loc(start, CommentOrNewline::Newline));
                 found_newline = true;
             }

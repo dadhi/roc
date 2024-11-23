@@ -52,20 +52,20 @@ impl<'a> State<'a> {
 
     /// Mutably advance the state by a given offset
     #[inline(always)]
-    pub(crate) fn advance_mut(&mut self, offset: usize) {
+    pub(crate) fn leap_mut(&mut self, offset: usize) {
         self.offset += offset;
     }
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
+    pub(crate) const fn leap(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self
     }
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn inc_len(mut self, str: &str) -> State<'a> {
+    pub(crate) const fn leap_len(mut self, str: &str) -> State<'a> {
         self.offset += str.len();
         self
     }
@@ -84,7 +84,7 @@ impl<'a> State<'a> {
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance_newline(mut self, offset: usize) -> State<'a> {
+    pub(crate) const fn leap_newline(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self.line_start = self.pos();
 

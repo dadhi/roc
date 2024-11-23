@@ -4,8 +4,9 @@ use crate::expr::{parse_expr_start, CHECK_FOR_ARROW};
 use crate::ident::{chomp_lowercase_part, parse_ident_chain, parse_lowercase_ident, Ident};
 use crate::keyword;
 use crate::number_literal::parse_number_base;
-use crate::parser::{at_keyword, Progress::*};
-use crate::parser::{collection_inner, EPattern, PInParens, PList, PRecord, ParseResult};
+use crate::parser::{
+    collection_inner, eat_keyword, EPattern, PInParens, PList, PRecord, ParseResult, Progress::*,
+};
 use crate::state::State;
 use crate::string_literal::{rest_of_str_like, StrLikeLiteral};
 use bumpalo::collections::string::String;
@@ -128,10 +129,11 @@ fn parse_pattern_as<'a>(
     state: State<'a>,
     min_indent: u32,
 ) -> ParseResult<'a, PatternAs<'a>, EPattern<'a>> {
-    if !at_keyword(keyword::AS, &state) {
+    let n = eat_keyword(keyword::AS, &state);
+    if n == 0 {
         return Err((NoProgress, EPattern::AsKeyword(state.pos())));
     }
-    let state = state.inc_len(keyword::AS);
+    let state = state.leap(n);
 
     let (_, spaces_before, state) =
         eat_nc_check(EPattern::AsIdentifier, arena, state, min_indent, false)?;
@@ -284,7 +286,7 @@ fn parse_list_rest_pattern<'a>(
     if !state.bytes().starts_with(b"..") {
         return Err((NoProgress, PList::Open(start)));
     }
-    let state = state.advance(2);
+    let state = state.leap(2);
     let dots_at = Region::new(start, state.pos());
 
     let no_as = Loc::at(dots_at, Pattern::ListRest(None));
@@ -402,7 +404,7 @@ fn rest_of_underscore_pattern(
     state: State<'_>,
 ) -> ParseResult<'_, Loc<Pattern<'_>>, EPattern<'_>> {
     let (name, state) = match chomp_lowercase_part(state.bytes()) {
-        Ok((name, _)) => (name, state.inc_len(name)),
+        Ok((name, _)) => (name, state.leap_len(name)),
         Err(NoProgress) => ("", state),
         Err(_) => return Err((MadeProgress, EPattern::End(state.pos()))),
     };

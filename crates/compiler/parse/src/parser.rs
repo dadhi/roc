@@ -713,11 +713,17 @@ pub struct FileError<'a, T> {
 /// Start the check from the next character after keyword,
 /// that should not be an identifier character
 /// to prevent treating `whence` or `iffy` as keywords
-pub fn at_keyword(kw: &'static str, state: &State<'_>) -> bool {
+pub fn eat_keyword<'a>(kw: &'static str, state: &State<'a>) -> usize {
     let bytes = state.bytes();
-    match bytes.get(kw.len()) {
+    let n = kw.len();
+    let found = match bytes.get(n) {
         Some(b) => is_special_char(b) && bytes.starts_with(kw.as_bytes()),
         None => bytes.starts_with(kw.as_bytes()),
+    };
+    if found {
+        n
+    } else {
+        0
     }
 }
 

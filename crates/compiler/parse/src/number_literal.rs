@@ -35,7 +35,7 @@ fn chomp_number_base<'a>(
 
     let string = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
 
-    let state = state.advance(chomped + 2 + is_negative as usize);
+    let state = state.leap(chomped + 2 + is_negative as usize);
     let literal = NumLiteral::NonBase10Int {
         is_negative,
         string,
@@ -64,7 +64,7 @@ fn chomp_number_dec<'a>(
     let string =
         unsafe { std::str::from_utf8_unchecked(&state.bytes()[0..chomped + is_negative as usize]) };
 
-    let state = state.advance(chomped + is_negative as usize);
+    let state = state.leap(chomped + is_negative as usize);
 
     let literal = if is_float {
         NumLiteral::Float(string)

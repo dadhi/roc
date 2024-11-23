@@ -16,8 +16,9 @@ use crate::ident::{
 };
 use crate::number_literal::parse_number_base;
 use crate::parser::{
-    at_keyword, collection_inner, EClosure, EExpect, EExpr, EIf, EImport, EImportParams, EInParens,
-    EList, EPattern, ERecord, EReturn, EType, EWhen, ParseResult, SpaceProblem, SyntaxError,
+    collection_inner, eat_keyword, EClosure, EExpect, EExpr, EIf, EImport, EImportParams,
+    EInParens, EList, EPattern, ERecord, EReturn, EType, EWhen, ParseResult, SpaceProblem,
+    SyntaxError,
 };
 use crate::pattern::parse_closure_param;
 use crate::state::State;
@@ -158,7 +159,7 @@ fn parse_field_task_result_suffixes<'a>(
                             match chomp_integer_part(state.bytes()) {
                                 Ok(name) => (
                                     Suffix::Accessor(Accessor::TupleIndex(name)),
-                                    state.inc_len(name),
+                                    state.leap_len(name),
                                 ),
                                 Err(_) => return Err((MadeProgress, EExpr::Access(ident_pos))),
                             }
@@ -265,7 +266,7 @@ fn parse_term<'a>(
                     let state = state.inc();
                     match chomp_lowercase_part(state.bytes()) {
                         Ok((name, _)) => {
-                            let state = state.advance(name.len());
+                            let state = state.leap(name.len());
                             Ok((state.loc(start, Expr::Underscore(name)), state))
                         }
                         Err(NoProgress) => Ok((state.loc(start, Expr::Underscore("")), state)),
@@ -311,37 +312,39 @@ fn parse_term<'a>(
             },
             _ => {
                 if opts.is_set(PARSE_IF_WHEN) {
-                    if at_keyword(keyword::IF, &state) {
-                        let state = state.advance(keyword::IF.len());
-                        return match rest_of_if_expr(flags, arena, state, min_indent) {
+                    let n = eat_keyword(keyword::IF, &state);
+                    if n > 0 {
+                        return match rest_of_if_expr(flags, arena, state.leap(n), min_indent) {
                             Ok((expr, state)) => Ok((state.loc(start, expr), state)),
                             Err((p, err)) => Err((p, EExpr::If(err, start))),
                         };
                     }
 
-                    if at_keyword(keyword::WHEN, &state) {
-                        let state = state.advance(keyword::WHEN.len());
-                        let indent = state.line_indent();
-                        return match when::rest_of_when_expr(None, flags, arena, state, indent) {
+                    let n = eat_keyword(keyword::WHEN, &state);
+                    if n > 0 {
+                        return match when::rest_of_when_expr(None, flags, arena, state.leap(n), 0) {
                             Ok((expr, state)) => Ok((state.loc(start, expr), state)),
                             Err((p, err)) => Err((p, EExpr::When(err, start))),
                         };
                     }
                 }
 
-                if at_keyword(keyword::CRASH, &state) {
-                    let state = state.advance(keyword::CRASH.len());
+                let n = eat_keyword(keyword::CRASH, &state);
+                if n > 0 {
+                    let state = state.leap(n);
                     return Ok((state.loc(start, Expr::Crash), state));
                 }
 
-                if at_keyword(keyword::DBG, &state) {
-                    let state = state.advance(keyword::DBG.len());
+                let n = eat_keyword(keyword::DBG, &state);
+                if n > 0 {
+                    let state = state.leap(n);
                     return Ok((state.loc(start, Expr::Dbg), state));
                 }
 
                 // todo: @later "try" is not included into KEYWORDS in keyword.rs because there still functions with the such name
-                if at_keyword("try", &state) {
-                    let state = state.advance("try".len());
+                let n = eat_keyword("try", &state);
+                if n > 0 {
+                    let state = state.leap(n);
                     return Ok((state.loc(start, Expr::Try), state));
                 }
 
@@ -530,7 +533,7 @@ fn parse_stmt_start<'a>(
     flags: ExprParseFlags,
     comment_region: Region,
     arena: &'a Bump,
-    mut state: State<'a>,
+    state: State<'a>,
     min_indent: u32,
 ) -> ParseResult<'a, Loc<Stmt<'a>>, EExpr<'a>> {
     let start = state.pos();
@@ -540,56 +543,35 @@ fn parse_stmt_start<'a>(
                 Ok((expr, state)) => Ok((state.loc(start, Stmt::Expr(expr)), state)),
                 Err((p, fail)) => Err((p, EExpr::Closure(fail, start))),
             },
-            b'i' => {
-                if at_keyword(keyword::IF, &state) {
-                    state.advance_mut(keyword::IF.len());
-                    match rest_of_if_expr(flags, arena, state, min_indent) {
-                        Ok((expr, state)) => Ok((state.loc(start, Stmt::Expr(expr)), state)),
-                        Err((p, fail)) => Err((p, EExpr::If(fail, start))),
-                    }
-                } else if at_keyword(keyword::IMPORT, &state) {
-                    state.advance_mut(keyword::IMPORT.len());
-                    rest_of_import(start, arena, state, min_indent)
-                } else {
-                    parse_stmt_operator_chain(flags, arena, state, min_indent)
-                }
-            }
-            b'e' => {
-                if at_keyword(keyword::EXPECT, &state) {
-                    state.advance_mut(keyword::EXPECT.len());
-                    rest_of_expect_stmt(start, flags, comment_region, arena, state)
-                } else {
-                    parse_stmt_operator_chain(flags, arena, state, min_indent)
-                }
-            }
-            b'd' => {
-                if at_keyword(keyword::DBG, &state) {
-                    state.advance_mut(keyword::DBG.len());
-                    rest_of_dbg_stmt(start, flags, comment_region, arena, state)
-                } else {
-                    parse_stmt_operator_chain(flags, arena, state, min_indent)
-                }
-            }
-            b'r' => {
-                if at_keyword(keyword::RETURN, &state) {
-                    state.advance_mut(keyword::RETURN.len());
-                    rest_of_return_stmt(start, flags, arena, state)
-                } else {
-                    parse_stmt_operator_chain(flags, arena, state, min_indent)
-                }
-            }
-            b'w' => {
-                if at_keyword(keyword::WHEN, &state) {
-                    state.advance_mut(keyword::WHEN.len());
-                    let indent = state.line_indent();
-                    match when::rest_of_when_expr(None, flags, arena, state, indent) {
-                        Ok((expr, state)) => Ok((state.loc(start, Stmt::Expr(expr)), state)),
-                        Err((p, err)) => Err((p, EExpr::When(err, start))),
-                    }
-                } else {
-                    parse_stmt_operator_chain(flags, arena, state, min_indent)
-                }
-            }
+            b'i' => match eat_keyword(keyword::IF, &state) {
+                0 => match eat_keyword(keyword::IMPORT, &state) {
+                    0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
+                    n => rest_of_import(start, arena, state.leap(n), min_indent),
+                },
+                n => match rest_of_if_expr(flags, arena, state.leap(n), min_indent) {
+                    Ok((expr, state)) => Ok((state.loc(start, Stmt::Expr(expr)), state)),
+                    Err((p, fail)) => Err((p, EExpr::If(fail, start))),
+                },
+            },
+            b'e' => match eat_keyword(keyword::EXPECT, &state) {
+                0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
+                n => rest_of_expect_stmt(start, flags, comment_region, arena, state.leap(n)),
+            },
+            b'd' => match eat_keyword(keyword::DBG, &state) {
+                0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
+                n => rest_of_dbg_stmt(start, flags, comment_region, arena, state.leap(n)),
+            },
+            b'r' => match eat_keyword(keyword::RETURN, &state) {
+                0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
+                n => rest_of_return_stmt(start, flags, arena, state.leap(n)),
+            },
+            b'w' => match eat_keyword(keyword::WHEN, &state) {
+                0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
+                n => match when::rest_of_when_expr(None, flags, arena, state.leap(n), 0) {
+                    Ok((expr, state)) => Ok((state.loc(start, Stmt::Expr(expr)), state)),
+                    Err((p, err)) => Err((p, EExpr::When(err, start))),
+                },
+            },
             _ => parse_stmt_operator_chain(flags, arena, state, min_indent),
         },
         None => Err((NoProgress, EExpr::Start(start))),
@@ -978,7 +960,7 @@ fn parse_imported_module_name(
 
     let name_pos = state.pos();
     let (name, state) = match chomp_module_name(state.bytes()) {
-        Ok(name) => (ModuleName::new(name), state.inc_len(name)),
+        Ok(name) => (ModuleName::new(name), state.leap_len(name)),
         Err(p) => return Err((p, EImport::ModuleName(name_pos))),
     };
 
@@ -1693,7 +1675,7 @@ fn parse_stmt_multi_backpassing<'a>(
     if !state.bytes().starts_with(b"<-") {
         return Err((MadeProgress, EExpr::BackpassArrow(state.pos())));
     }
-    let state = state.advance(2);
+    let state = state.leap(2);
 
     let min_indent = line_indent + 1;
     let (ps, spaces_before, state) =
@@ -2222,13 +2204,13 @@ fn rest_of_closure<'a>(
                     module_name: "",
                     parts,
                 };
-                (ident, state.advance(width))
+                (ident, state.leap(width))
             }
             // Handling the identity function `\.`, where the `.` was found but nothing after it, therefore the width is 1.
             Err(1) => (Ident::Plain(ident), state.inc()),
             Err(width) => {
                 let fail = BadIdent::WeirdDotAccess(pos.bump_offset(width));
-                malformed_ident(bytes, fail, state.advance(width))
+                malformed_ident(bytes, fail, state.leap(width))
             }
         };
 
@@ -2400,7 +2382,7 @@ fn rest_of_closure<'a>(
         if state.bytes().first() != Some(&b',') {
             break;
         }
-        state.advance_mut(1);
+        state.inc_mut();
 
         // After delimiter found, parse the parameter
         let param_pos = state.pos();
@@ -2434,7 +2416,7 @@ fn rest_of_closure<'a>(
     if !state.bytes().starts_with(b"->") {
         return Err((MadeProgress, EClosure::Arrow(state.pos())));
     }
-    state.advance_mut(2);
+    state.leap_mut(2);
 
     let body_indent = state.line_indent() + 1;
     let (first_nl, state) = eat_nc_loc_c(EClosure::IndentBody, arena, state, body_indent, true)?;
@@ -2486,8 +2468,12 @@ mod when {
         flags: ExprParseFlags,
         arena: &'a Bump,
         state: State<'a>,
-        min_indent: u32,
+        mut min_indent: u32,
     ) -> ParseResult<'a, Expr<'a>, EWhen<'a>> {
+        if min_indent == 0 {
+            min_indent = state.line_indent();
+        }
+
         let (shortcut, cond, state) = if let Some((cond, what)) = cond {
             (Some(what), cond, state)
         } else {
@@ -2505,10 +2491,11 @@ mod when {
             let (_, (spaces_after, _), state) = eat_nc(arena, state, true)?;
             let cond = cond.spaced_around(arena, spaces_before, spaces_after);
 
-            if !at_keyword(keyword::IS, &state) {
+            let n = eat_keyword(keyword::IS, &state);
+            if n == 0 {
                 return Err((MadeProgress, EWhen::Is(state.pos())));
             }
-            (None, cond, state.inc_len(keyword::IS))
+            (None, cond, state.leap(n))
         };
 
         // Note that we allow the `is` to be at any indent level, since this doesn't introduce any
@@ -2665,10 +2652,11 @@ mod when {
         let column_patterns = (pattern_column, patterns);
         let original_state = state.clone();
 
-        if !at_keyword(keyword::IF, &state) {
+        let n = eat_keyword(keyword::IF, &state);
+        if n == 0 {
             return Ok(((column_patterns, None), original_state));
         }
-        state.advance_mut(keyword::IF.len());
+        state.leap_mut(n);
 
         // TODO we should require space before the expression but not after
         let (_, spaces_before, state) =
@@ -2693,7 +2681,7 @@ mod when {
         if !state.bytes().starts_with(b"->") {
             return Err((MadeProgress, EWhen::Arrow(state.pos())));
         }
-        let state = state.advance(2);
+        let state = state.leap(2);
 
         let inc_indent = state.line_indent() + 1;
         match parse_block(
@@ -2913,24 +2901,23 @@ fn rest_of_if_expr<'a>(
         )?;
 
         let cond_pos = state.pos();
-        let (cond, state) = match parse_expr_start(
+        let (cond, state) = parse_expr_start(
             CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING,
             None,
             arena,
             state,
             min_indent,
-        ) {
-            Ok(ok) => ok,
-            Err((p, fail)) => return Err((p, EIf::Condition(arena.alloc(fail), cond_pos))),
-        };
+        )
+        .map_err(|(p, fail)| (p, EIf::Condition(arena.alloc(fail), cond_pos)))?;
 
         let (_, spaces_after_cond, state) =
             eat_nc_check(EIf::IndentThenToken, arena, state.clone(), min_indent, true)?;
 
-        if !at_keyword(keyword::THEN, &state) {
+        let n = eat_keyword(keyword::THEN, &state);
+        if n == 0 {
             return Err((MadeProgress, EIf::Then(state.pos())));
         }
-        let state = state.inc_len(keyword::THEN);
+        let state = state.leap(n);
 
         let cond = cond.spaced_around(arena, spaces_before_cond, spaces_after_cond);
 
@@ -2959,10 +2946,11 @@ fn rest_of_if_expr<'a>(
             Loc::at(then_expr.region, expr)
         };
 
-        if !at_keyword(keyword::ELSE, &state) {
+        let n = eat_keyword(keyword::ELSE, &state);
+        if n == 0 {
             return Err((MadeProgress, EIf::Else(state.pos())));
         }
-        let state = state.inc_len(keyword::ELSE);
+        let state = state.leap(n);
 
         branches.push((cond, then_expr));
 
@@ -2971,8 +2959,9 @@ fn rest_of_if_expr<'a>(
         if let Ok((_, _, state)) =
             eat_nc_check(EIf::IndentIf, arena, state.clone(), min_indent, false)
         {
-            if at_keyword(keyword::IF, &state) {
-                loop_state = state.advance(keyword::IF.len());
+            let n = eat_keyword(keyword::IF, &state);
+            if n > 0 {
+                loop_state = state.leap(n);
                 continue;
             }
         }
@@ -3637,7 +3626,7 @@ pub fn parse_record_field<'a>(
             let state = state.inc();
             let name_pos = state.pos();
             let (opt_field_label, state) = match chomp_lowercase_part(state.bytes()) {
-                Ok((name, _)) => (name, state.inc_len(name)),
+                Ok((name, _)) => (name, state.leap_len(name)),
                 Err(NoProgress) => ("", state),
                 Err(_) => return Err((MadeProgress, ERecord::Field(name_pos))),
             };
@@ -3705,7 +3694,7 @@ fn rest_of_record<'a>(
                             if state.bytes().first() == Some(&b'&') {
                                 (Some((ident, RecordHelpPrefix::Update)), state.inc())
                             } else if state.bytes().starts_with(b"<-") {
-                                (Some((ident, RecordHelpPrefix::Mapper)), state.advance(2))
+                                (Some((ident, RecordHelpPrefix::Mapper)), state.leap(2))
                             } else {
                                 (None, prev)
                             }
@@ -3929,14 +3918,14 @@ fn parse_bin_op(state: State<'_>) -> ParseResult<BinOp, EExpr<'_>> {
         ">" => Ok((BinOp::GreaterThan, state.inc())),
         "<" => Ok((BinOp::LessThan, state.inc())),
         "~" => Ok((BinOp::When, state.inc())),
-        "|>" => Ok((BinOp::Pizza, state.advance(2))),
-        "==" => Ok((BinOp::Equals, state.advance(2))),
-        "!=" => Ok((BinOp::NotEquals, state.advance(2))),
-        ">=" => Ok((BinOp::GreaterThanOrEq, state.advance(2))),
-        "<=" => Ok((BinOp::LessThanOrEq, state.advance(2))),
-        "&&" => Ok((BinOp::And, state.advance(2))),
-        "||" => Ok((BinOp::Or, state.advance(2))),
-        "//" => Ok((BinOp::DoubleSlash, state.advance(2))),
+        "|>" => Ok((BinOp::Pizza, state.leap(2))),
+        "==" => Ok((BinOp::Equals, state.leap(2))),
+        "!=" => Ok((BinOp::NotEquals, state.leap(2))),
+        ">=" => Ok((BinOp::GreaterThanOrEq, state.leap(2))),
+        "<=" => Ok((BinOp::LessThanOrEq, state.leap(2))),
+        "&&" => Ok((BinOp::And, state.leap(2))),
+        "||" => Ok((BinOp::Or, state.leap(2))),
+        "//" => Ok((BinOp::DoubleSlash, state.leap(2))),
 
         // a `.` makes no progress, so it does not interfere with `.foo` access(or)
         "." => Err((NoProgress, EExpr::BadOperator(".", state.pos()))),
@@ -3959,9 +3948,9 @@ fn parse_op(state: State<'_>) -> ParseResult<OperatorOrDef, EExpr<'_>> {
             )),
             ":=" => Ok((
                 OperatorOrDef::AliasOrOpaque(AliasOrOpaque::Opaque),
-                state.advance(2),
+                state.leap(2),
             )),
-            "<-" => Ok((OperatorOrDef::Backpassing, state.advance(2))),
+            "<-" => Ok((OperatorOrDef::Backpassing, state.leap(2))),
             _ => Err((MadeProgress, EExpr::BadOperator(op, pos))),
         },
         Err(err) => Err(err),

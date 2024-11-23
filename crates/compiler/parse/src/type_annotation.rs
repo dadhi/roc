@@ -8,10 +8,9 @@ use crate::ident::{
     chomp_concrete_type, chomp_lowercase_part, chomp_uppercase_part, parse_lowercase_ident,
 };
 use crate::keyword::{self, is_keyword};
-use crate::parser::ParseResult;
 use crate::parser::{
-    at_keyword, collection_inner, ERecord, EType, ETypeApply, ETypeInParens, ETypeInlineAlias,
-    ETypeRecord, ETypeTagUnion, Progress::*,
+    collection_inner, eat_keyword, ERecord, EType, ETypeApply, ETypeInParens, ETypeInlineAlias,
+    ETypeRecord, ETypeTagUnion, ParseResult, Progress::*,
 };
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
@@ -168,10 +167,11 @@ fn parse_term<'a>(
             Err(_) => return Ok((type_ann, type_ann_state)),
         };
 
-    if !at_keyword(keyword::AS, &state) {
+    let n = eat_keyword(keyword::AS, &state);
+    if n == 0 {
         return Ok((type_ann, type_ann_state));
     }
-    let state = state.advance(keyword::AS.len());
+    let state = state.leap(n);
 
     let (sp, spaces_after_as, state) =
         eat_nc_check(EType::TAsIndentStart, arena, state, min_indent, false)?;
@@ -248,7 +248,7 @@ fn parse_tag_type<'a>(
 ) -> ParseResult<'a, Loc<Tag<'a>>, ETypeTagUnion<'a>> {
     let start = state.pos();
     let (name, state) = match chomp_uppercase_part(state.bytes()) {
-        Ok(out) => (out, state.inc_len(out)),
+        Ok(out) => (out, state.leap_len(out)),
         Err(p) => return Err((p, ETypeTagUnion::End(state.pos()))),
     };
     let name = state.loc(start, name);
@@ -305,7 +305,7 @@ fn record_type_field<'a>(
             if may_be_kw && is_keyword(ident) {
                 return Err((MadeProgress, ETypeRecord::Field(start)));
             }
-            (ident, state.inc_len(ident))
+            (ident, state.leap_len(ident))
         }
     };
 
@@ -473,7 +473,7 @@ fn parse_implements_clause<'a>(
     if !state.bytes().starts_with(keyword::IMPLEMENTS.as_bytes()) {
         return Err((MadeProgress, EType::TImplementsClause(state.pos())));
     }
-    let state = state.inc_len(keyword::IMPLEMENTS);
+    let state = state.leap_len(keyword::IMPLEMENTS);
 
     // Parse ability chain e.g. `Hash & Eq &..`, this may be qualified from another module like `Hash.Hash`
     let min_indent = state.column() + 1;
@@ -535,7 +535,7 @@ pub fn parse_implements_abilities<'a>(
     if !state.bytes().starts_with(keyword::IMPLEMENTS.as_bytes()) {
         return Err((NoProgress, EType::TImplementsClause(state.pos())));
     }
-    let state = state.inc_len(keyword::IMPLEMENTS);
+    let state = state.leap_len(keyword::IMPLEMENTS);
 
     let inc_indent = min_indent + 1;
     let (_, spaces_after_impl, state) =
@@ -677,10 +677,10 @@ pub(crate) fn parse_type_expr<'a>(
 
             break if state.bytes().starts_with(b"->") {
                 let out = (more_args, sp_after_single_ann, FunctionArrow::Pure);
-                Ok((out, state.advance(2)))
+                Ok((out, state.leap(2)))
             } else if state.bytes().starts_with(b"=>") {
                 let out = (more_args, sp_after_single_ann, FunctionArrow::Effectful);
-                Ok((out, state.advance(2)))
+                Ok((out, state.leap(2)))
             } else {
                 Err((p, EType::TStart(state.pos())))
             };
@@ -783,7 +783,7 @@ pub(crate) fn parse_type_expr<'a>(
     if !state.bytes().starts_with(crate::keyword::WHERE.as_bytes()) {
         return Ok((types, types_state));
     }
-    state.advance_mut(keyword::WHERE.len());
+    state.leap_mut(keyword::WHERE.len());
 
     // Parse the first clause (there must be one), then the rest
     let (first_impl, mut state) = match parse_implements_clause(arena, state, min_indent) {
@@ -840,7 +840,7 @@ fn parse_concrete_type(state: State<'_>) -> ParseResult<'_, TypeAnnotation<'_>, 
     match chomp_concrete_type(state.bytes()) {
         Ok((module_name, type_name, width)) => {
             let answer = TypeAnnotation::Apply(module_name, type_name, &[]);
-            Ok((answer, state.advance(width)))
+            Ok((answer, state.leap(width)))
         }
         Err(NoProgress) => Err((NoProgress, ETypeApply::End(state.pos()))),
         Err(_) => {
@@ -852,7 +852,7 @@ fn parse_concrete_type(state: State<'_>) -> ParseResult<'_, TypeAnnotation<'_>, 
             let parsed_str =
                 unsafe { std::str::from_utf8_unchecked(&initial_bytes[..chomped + delta]) };
 
-            state = state.advance(chomped);
+            state = state.leap(chomped);
             Ok((TypeAnnotation::Malformed(parsed_str), state))
         }
     }

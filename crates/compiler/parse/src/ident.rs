@@ -67,7 +67,7 @@ pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Prog
             if may_be_kw && is_keyword(ident) {
                 Err(NoProgress)
             } else {
-                Ok((ident, state.inc_len(ident)))
+                Ok((ident, state.leap_len(ident)))
             }
         }
         Err(p) => Err(p),
@@ -87,7 +87,7 @@ pub fn uppercase(
     match chomp_uppercase_part(state.bytes()) {
         Err(p) => Err(p),
         Ok(ident) => {
-            let state = state.inc_len(ident);
+            let state = state.leap_len(ident);
             let ident = state.loc(start, Spaced::Item(ident.into()));
             Ok((ident, state))
         }
@@ -102,7 +102,7 @@ pub fn parse_anycase_ident(state: State<'_>) -> Result<(&str, State<'_>), Progre
             if may_be_kw && is_keyword(ident) {
                 Err(MadeProgress)
             } else {
-                Ok((ident, state.inc_len(ident)))
+                Ok((ident, state.leap_len(ident)))
             }
         }
     }
@@ -117,7 +117,7 @@ pub(crate) fn malformed_ident<'a>(
     let delta = initial_bytes.len() - state.bytes().len();
     let parsed_str = unsafe { std::str::from_utf8_unchecked(&initial_bytes[..chomped + delta]) };
     let ident = Ident::Malformed(parsed_str, problem);
-    (ident, state.advance(chomped))
+    (ident, state.leap(chomped))
 }
 
 /// skip forward to the next non-identifier character
@@ -378,7 +378,7 @@ pub fn parse_ident_chain<'a>(
             '.' => {
                 return match chomp_accessor(&bytes[1..], start) {
                     Ok(accessor) => {
-                        let state = state.advance(1 + accessor.len());
+                        let state = state.leap(1 + accessor.len());
                         Ok((Ident::AccessorFunction(accessor), state))
                     }
                     Err(fail) => Ok(malformed_ident(bytes, fail, state.inc())),
@@ -387,7 +387,7 @@ pub fn parse_ident_chain<'a>(
             '&' => {
                 return match chomp_record_updater(&bytes[1..], start) {
                     Ok(updater) => {
-                        let state = state.advance(1 + updater.len());
+                        let state = state.leap(1 + updater.len());
                         Ok((Ident::RecordUpdaterFunction(updater), state))
                     }
                     // return NoProgress to allow parsing &&
@@ -397,7 +397,7 @@ pub fn parse_ident_chain<'a>(
             '@' => {
                 return match chomp_opaque_ref(bytes, start) {
                     Ok(tagname) => {
-                        let state = state.advance(tagname.len());
+                        let state = state.leap(tagname.len());
                         Ok((Ident::OpaqueRef(tagname), state))
                     }
                     Err(fail) => Ok(malformed_ident(bytes, fail, state.inc())),
@@ -445,12 +445,12 @@ pub fn parse_ident_chain<'a>(
                     Ok(width) => {
                         if first_is_uppercase && matches!(parts[0], Accessor::TupleIndex(_)) {
                             let fail = BadIdent::QualifiedTupleAccessor(start.bump_offset(chomped));
-                            return Ok(malformed_ident(bytes, fail, state.advance(chomped)));
+                            return Ok(malformed_ident(bytes, fail, state.leap(chomped)));
                         }
 
                         let parts = parts.into_bump_slice();
                         let ident = Ident::Access { module_name, parts };
-                        Ok((ident, state.advance(chomped + width)))
+                        Ok((ident, state.leap(chomped + width)))
                     }
                     Err(width) => {
                         let fail = match width {
@@ -462,7 +462,7 @@ pub fn parse_ident_chain<'a>(
                             }
                             _ => BadIdent::WeirdDotAccess(start.bump_offset(chomped + width)),
                         };
-                        return Ok(malformed_ident(bytes, fail, state.advance(chomped + width)));
+                        return Ok(malformed_ident(bytes, fail, state.leap(chomped + width)));
                     }
                 };
             }
@@ -471,7 +471,7 @@ pub fn parse_ident_chain<'a>(
                 // but still parse them (and generate a malformed identifier)
                 // to give good error messages for this case
                 let fail = BadIdent::UnderscoreInMiddle(start.bump_offset(chomped + 1));
-                return Ok(malformed_ident(bytes, fail, state.advance(chomped + 1)));
+                return Ok(malformed_ident(bytes, fail, state.leap(chomped + 1)));
             }
             Ok((ch, width)) if ch.is_alphabetic() || ch.is_ascii_digit() => {
                 // continue the parsing loop
@@ -487,11 +487,11 @@ pub fn parse_ident_chain<'a>(
                 }
                 let value = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
                 return if first_is_uppercase {
-                    Ok((Ident::Tag(value), state.advance(chomped)))
+                    Ok((Ident::Tag(value), state.leap(chomped)))
                 } else if may_be_kw && is_keyword(value) {
                     Err((NoProgress, EExpr::Start(start)))
                 } else {
-                    Ok((Ident::Plain(value), state.advance(chomped)))
+                    Ok((Ident::Plain(value), state.leap(chomped)))
                 };
             }
         }

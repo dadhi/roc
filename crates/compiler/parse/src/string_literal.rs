@@ -19,7 +19,7 @@ fn ascii_hex_digits<'a>(
         if (byte as char).is_ascii_hexdigit() {
             buf.push(byte as char);
         } else if !buf.is_empty() {
-            state.advance_mut(buf.len());
+            state.leap_mut(buf.len());
             return Ok((buf.into_bump_str(), state));
         } else {
             // We didn't find any hex digits!
@@ -34,7 +34,7 @@ fn consume_indent(mut state: State, mut indent: u32) -> Result<State, (Progress,
     while indent > 0 {
         match state.bytes().first() {
             Some(b' ') => {
-                state.advance_mut(1);
+                state.leap_mut(1);
                 indent -= 1;
             }
             None | Some(b'\n') => {
@@ -107,7 +107,7 @@ pub fn rest_of_str_like<'a>(
     let mut is_multiline = false;
     let start_state;
     if state.bytes().starts_with(b"\"\"") {
-        state.advance_mut(2);
+        state.leap_mut(2);
 
         is_multiline = true;
 
@@ -130,7 +130,7 @@ pub fn rest_of_str_like<'a>(
             segments.push(StrSegment::EscapedChar($ch));
 
             // Advance past the segment we just added
-            state.advance_mut(segment_parsed_bytes);
+            state.leap_mut(segment_parsed_bytes);
 
             // Reset the segment
             segment_parsed_bytes = 0;
@@ -149,7 +149,7 @@ pub fn rest_of_str_like<'a>(
 
                 match std::str::from_utf8(string_bytes) {
                     Ok(string) => {
-                        state.advance_mut(string.len());
+                        state.leap_mut(string.len());
                         segments.push($transform(string));
                     }
                     Err(_) => {
@@ -185,7 +185,7 @@ pub fn rest_of_str_like<'a>(
                     // special case of the empty string
                     if is_multiline {
                         if bytes.as_slice().starts_with(b"\"\"") {
-                            return Ok((StrLikeLiteral::DOUBLE_DOUBLE_QUOTES, state.advance(3)));
+                            return Ok((StrLikeLiteral::DOUBLE_DOUBLE_QUOTES, state.leap(3)));
                         } else {
                             // this quote is in a block string
                             continue;
@@ -213,7 +213,7 @@ pub fn rest_of_str_like<'a>(
                                 StrLiteral::Block(arena.alloc([segments.into_bump_slice()]))
                             };
 
-                            return Ok((StrLikeLiteral::Str(expr), state.advance(3)));
+                            return Ok((StrLikeLiteral::Str(expr), state.leap(3)));
                         } else {
                             // this quote is in a block string
                             continue;
@@ -301,7 +301,7 @@ pub fn rest_of_str_like<'a>(
                     let without_newline = &state.bytes()[0..(segment_parsed_bytes - 1)];
                     let with_newline = &state.bytes()[0..segment_parsed_bytes];
 
-                    state.advance_mut(segment_parsed_bytes);
+                    state.leap_mut(segment_parsed_bytes);
                     state = consume_indent(state, column)?;
                     bytes = state.bytes().iter();
 
@@ -342,7 +342,7 @@ pub fn rest_of_str_like<'a>(
                 match bytes.next() {
                     Some(b'u') => {
                         // Advance past the `\u` before using the expr parser
-                        state.advance_mut(2);
+                        state.leap_mut(2);
 
                         let original_byte_count = state.bytes().len();
 
@@ -418,7 +418,7 @@ pub fn rest_of_str_like<'a>(
 
                     match std::str::from_utf8(string_bytes) {
                         Ok(string) => {
-                            state.advance_mut(string.len());
+                            state.leap_mut(string.len());
                             segments.push(StrSegment::Plaintext(string));
                         }
                         Err(_) => {
@@ -429,7 +429,7 @@ pub fn rest_of_str_like<'a>(
                 }
 
                 // Advance past the `$(`
-                state.advance_mut(2);
+                state.leap_mut(2);
 
                 let original_byte_count = state.bytes().len();
 

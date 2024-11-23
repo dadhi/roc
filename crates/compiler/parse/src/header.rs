@@ -9,7 +9,7 @@ use crate::expr::merge_spaces;
 use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseIdent};
 use crate::parser::Progress::{self, *};
 use crate::parser::{
-    at_keyword, collection_inner, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
+    collection_inner, eat_keyword, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
     EPackages, EParams, EProvides, ERequires, ETypedIdent, ParseResult, SourceError, SpaceProblem,
     SyntaxError,
 };
@@ -52,22 +52,23 @@ pub fn header<'a>(
     let (_, before, state) = eat_nc_check(EHeader::IndentStart, arena, state, 0, false)?;
 
     let inc_indent = 1;
-    if at_keyword("module", &state) {
-        let state = state.inc_len("module");
-        let (item, state) = parse_module_header(arena, state, inc_indent)?;
+    let n = eat_keyword("module", &state);
+    if n > 0 {
+        let (item, state) = parse_module_header(arena, state.leap(n), inc_indent)?;
         let item = Header::Module(item);
         return Ok((SpacesBefore { before, item }, state));
     }
 
-    if at_keyword("interface", &state) {
-        let state = state.inc_len("interface");
-        let (out, state) = interface_header(arena, state, inc_indent)?;
+    let n = eat_keyword("interface", &state);
+    if n > 0 {
+        let (out, state) = interface_header(arena, state.leap(n), inc_indent)?;
         let item = Header::Module(out);
         return Ok((SpacesBefore { before, item }, state));
     }
 
-    if at_keyword("app", &state) {
-        let state = state.inc_len("app");
+    let n = eat_keyword("app", &state);
+    if n > 0 {
+        let state = state.leap(n);
         let (out, state) = match app_header(arena, state.clone(), inc_indent) {
             Ok(ok) => ok,
             Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
@@ -77,8 +78,9 @@ pub fn header<'a>(
         return Ok((SpacesBefore { before, item }, state));
     }
 
-    if at_keyword("package", &state) {
-        let state = state.inc_len("package");
+    let n = eat_keyword("package", &state);
+    if n > 0 {
+        let state = state.leap(n);
         let (out, state) = match package_header(arena, state.clone(), inc_indent) {
             Ok(ok) => ok,
             Err((MadeProgress, fail)) => return Err((MadeProgress, fail)),
@@ -88,16 +90,16 @@ pub fn header<'a>(
         return Ok((SpacesBefore { before, item }, state));
     }
 
-    if at_keyword("platform", &state) {
-        let state = state.inc_len("platform");
-        let (item, state) = platform_header(arena, state, inc_indent)?;
+    let n = eat_keyword("platform", &state);
+    if n > 0 {
+        let (item, state) = platform_header(arena, state.leap(n), inc_indent)?;
         let item = Header::Platform(item);
         return Ok((SpacesBefore { before, item }, state));
     }
 
-    if at_keyword("hosted", &state) {
-        let state = state.inc_len("hosted");
-        let (header, state) = hosted_header(arena, state, inc_indent)?;
+    let n = eat_keyword("hosted", &state);
+    if n > 0 {
+        let (header, state) = hosted_header(arena, state.leap(n), inc_indent)?;
         let item = Header::Hosted(header);
         return Ok((SpacesBefore { before, item }, state));
     }
@@ -153,7 +155,7 @@ fn parse_module_params<'a>(
     if !state.bytes().starts_with(b"->") {
         return Err((MadeProgress, EParams::Arrow(state.pos())));
     }
-    let state = state.advance(2);
+    let state = state.leap(2);
 
     let (_, after_arrow, state) =
         eat_nc_check(EParams::AfterArrow, arena, state, min_indent, false)?;
@@ -311,7 +313,7 @@ pub(crate) fn chomp_module_name(buffer: &[u8]) -> Result<&str, Progress> {
 #[inline(always)]
 pub(crate) fn parse_module_name(state: State<'_>) -> Result<(ModuleName<'_>, State<'_>), Progress> {
     match chomp_module_name(state.bytes()) {
-        Ok(name) => Ok((ModuleName::new(name), state.inc_len(name))),
+        Ok(name) => Ok((ModuleName::new(name), state.leap_len(name))),
         Err(p) => Err(p),
     }
 }
@@ -907,12 +909,12 @@ where
         Err((_, fail)) => return Err((NoProgress, fail)),
     };
 
-    if !at_keyword(K::KEYWORD, &state) {
+    let n = eat_keyword(K::KEYWORD, &state);
+    if n == 0 {
         return Err((NoProgress, expectation(state.pos())));
     }
-    let state = state.inc_len(K::KEYWORD);
 
-    let (_, after, state) = eat_nc_check(indent_problem2, arena, state, min_indent, false)?;
+    let (_, after, state) = eat_nc_check(indent_problem2, arena, state.leap(n), min_indent, false)?;
 
     let spaced_keyword = Spaces {
         before,
@@ -960,7 +962,7 @@ fn exposes_module_collection<'a>(
         let start = state.pos();
         match chomp_module_name(state.bytes()) {
             Ok(name) => {
-                let state = state.inc_len(name);
+                let state = state.leap_len(name);
                 let name = state.loc(start, Spaced::Item(ModuleName::new(name)));
                 Ok((name, state))
             }
@@ -1164,7 +1166,7 @@ fn imports_entry<'a>(
     if !state.bytes().starts_with(b"as") {
         return Err((MadeProgress, EImports::AsKeyword(state.pos())));
     }
-    let state = state.advance(2);
+    let state = state.leap(2);
     let (.., state) = eat_nc_check(EImports::AsKeyword, arena, state, 0, true)?;
 
     // e.g. file : Str
@@ -1598,9 +1600,10 @@ pub fn parse_package_entry<'a>(
 
     let plat_parser = move |arena: &'a bumpalo::Bump, state: State<'a>| {
         let olds = state.clone();
-        let (p, sp, state) = if at_keyword(crate::keyword::PLATFORM, &state) {
-            let state = state.inc_len(crate::keyword::PLATFORM);
-            let (_, sp, state) = eat_nc_check(EPackageEntry::IndentPackage, arena, state, 0, true)?;
+        let n = eat_keyword(crate::keyword::PLATFORM, &state);
+        let (p, sp, state) = if n > 0 {
+            let (_, sp, state) =
+                eat_nc_check(EPackageEntry::IndentPackage, arena, state.leap(n), 0, true)?;
             (MadeProgress, Some(sp), state)
         } else {
             (NoProgress, None, olds)

@@ -1317,7 +1317,7 @@ mod ability {
                 let inc_indent = indent_column + 1;
 
                 // TODO: do we get anything from picking up spaces here?
-                let (_, _spaces_after_name, state) =
+                let (_, _, state) =
                     eat_nc_check(EAbility::DemandName, arena, state, inc_indent, true)?;
 
                 if state.bytes().first() != Some(&b':') {
@@ -1678,12 +1678,12 @@ fn parse_stmt_multi_backpassing<'a>(
     let state = state.leap(2);
 
     let min_indent = line_indent + 1;
-    let (ps, spaces_before, state) =
+    let (sp_pr, spaces_before, state) =
         eat_nc_check(EExpr::IndentEnd, arena, state, min_indent, false)?;
 
     let (loc_body, state) = match parse_expr_start(flags, None, arena, state, min_indent) {
         Ok(ok) => ok,
-        Err((pe, fail)) => return Err((ps.or(pe), fail)),
+        Err((pe, fail)) => return Err((sp_pr.or(pe), fail)),
     };
 
     let loc_body = loc_body.spaced_before(arena, spaces_before);
@@ -2563,13 +2563,7 @@ mod when {
         arena: &'a Bump,
         state: State<'a>,
         min_indent: u32,
-    ) -> Result<
-        (
-            ((u32, Vec<'a, Loc<Pattern<'a>>>), Option<Loc<Expr<'a>>>),
-            State<'a>,
-        ),
-        (Progress, EWhen<'a>),
-    > {
+    ) -> ParseResult<'a, ((u32, Vec<'a, Loc<Pattern<'a>>>), Option<Loc<Expr<'a>>>), EWhen<'a>> {
         let flags = flags.unset(CHECK_FOR_ARROW);
 
         // put no restrictions on the indent after the spaces; we'll check it manually

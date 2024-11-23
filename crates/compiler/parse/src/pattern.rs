@@ -297,9 +297,9 @@ fn parse_list_rest_pattern<'a>(
         Err(_) => return Ok((no_as, pattern_state)),
     };
 
-    let position = state.pos();
+    let pos = state.pos();
     match parse_pattern_as(arena, state, 0) {
-        Err((MadeProgress, e)) => Err((MadeProgress, PList::Pattern(arena.alloc(e), position))),
+        Err((MadeProgress, e)) => Err((MadeProgress, PList::Pattern(arena.alloc(e), pos))),
         Err(_) => Ok((no_as, pattern_state)),
         Ok((pattern_as, state)) => {
             let region = Region::span_across(&dots_at, &pattern_as.identifier.region);

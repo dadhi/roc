@@ -598,12 +598,12 @@ pub fn desugar_expr<'a>(
                 ),
             })
         }
-        Closure(loc_patterns, loc_ret, is_short) => env.arena.alloc(Loc {
+        Closure(loc_patterns, loc_ret, shortcut) => env.arena.alloc(Loc {
             region: loc_expr.region,
             value: Closure(
                 desugar_loc_patterns(env, scope, loc_patterns),
                 desugar_expr(env, scope, loc_ret),
-                *is_short,
+                *shortcut,
             ),
         }),
         Backpassing(loc_patterns, loc_body, loc_ret) => {
@@ -984,7 +984,7 @@ pub fn desugar_expr<'a>(
                 region: loc_expr.region,
             })
         }
-        When(loc_cond_expr, branches, variant) => {
+        When(loc_cond_expr, branches, shortcut) => {
             let loc_desugared_cond = &*env.arena.alloc(desugar_expr(env, scope, loc_cond_expr));
             let mut desugared_branches = Vec::with_capacity_in(branches.len(), env.arena);
 
@@ -1008,7 +1008,7 @@ pub fn desugar_expr<'a>(
             let desugared_branches = desugared_branches.into_bump_slice();
 
             env.arena.alloc(Loc {
-                value: When(loc_desugared_cond, desugared_branches, *variant),
+                value: When(loc_desugared_cond, desugared_branches, *shortcut),
                 region: loc_expr.region,
             })
         }

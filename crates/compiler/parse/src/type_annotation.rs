@@ -317,7 +317,7 @@ fn record_type_field<'a>(
     // (This is true in both literals and types.)
     if state.bytes().first() == Some(&b':') {
         let state = state.inc();
-        let (sp, spaces_before, state) =
+        let (sp_pr, spaces_before, state) =
             eat_nc_check(ETypeRecord::IndentColon, arena, state, 0, false)?;
 
         let val_pos = state.pos();
@@ -327,7 +327,7 @@ fn record_type_field<'a>(
             state,
             0,
         )
-        .map_err(|(ep, fail)| (ep.or(sp), ETypeRecord::Type(arena.alloc(fail), val_pos)))?;
+        .map_err(|(ep, fail)| (ep.or(sp_pr), ETypeRecord::Type(arena.alloc(fail), val_pos)))?;
 
         let loc_val = loc_val.spaced_before(arena, spaces_before);
         let req_val = RequiredValue(loc_label, spaces, arena.alloc(loc_val));
@@ -844,7 +844,6 @@ fn parse_concrete_type(state: State<'_>) -> ParseResult<'_, TypeAnnotation<'_>, 
         }
         Err(NoProgress) => Err((NoProgress, ETypeApply::End(state.pos()))),
         Err(_) => {
-            let mut state = state.clone();
             // we made some progress, but ultimately failed.
             // that means a malformed type name
             let chomped = crate::ident::chomp_malformed(state.bytes());
@@ -852,8 +851,7 @@ fn parse_concrete_type(state: State<'_>) -> ParseResult<'_, TypeAnnotation<'_>, 
             let parsed_str =
                 unsafe { std::str::from_utf8_unchecked(&initial_bytes[..chomped + delta]) };
 
-            state = state.leap(chomped);
-            Ok((TypeAnnotation::Malformed(parsed_str), state))
+            Ok((TypeAnnotation::Malformed(parsed_str), state.leap(chomped)))
         }
     }
 }

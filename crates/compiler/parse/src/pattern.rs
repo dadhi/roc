@@ -187,9 +187,7 @@ fn type_tag_or_def_tag_pattern_args<'a>(
             }
         }
 
-        if !spaces.is_empty() {
-            value = Pattern::SpaceBefore(arena.alloc(value), spaces);
-        }
+        value = value.spaced_before(arena, spaces);
         state = next;
         patterns.push(Loc::at(region, value));
     }
@@ -499,11 +497,6 @@ fn parse_record_pattern_field<'a>(
         return Ok((Loc::at(region, opt_field), state));
     }
 
-    let value = if !label_spaces.is_empty() {
-        Pattern::SpaceAfter(a.alloc(Pattern::Identifier { ident: label }), label_spaces)
-    } else {
-        Pattern::Identifier { ident: label }
-    };
-
+    let value = Pattern::Identifier { ident: label }.spaced_after(a, label_spaces);
     Ok((Loc::at(label_at, value), state))
 }

@@ -99,6 +99,14 @@ impl<T> Slice<T> {
             _marker: PhantomData,
         }
     }
+
+    pub const fn point(start: usize) -> Self {
+        Self {
+            start: start as u32,
+            length: 0,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<T> IntoIterator for Slice<T> {

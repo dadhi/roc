@@ -643,10 +643,10 @@ fn provides_to_package<'a>(
 ) -> ParseResult<'a, To<'a>, EProvides<'a>> {
     let pos = state.pos();
     match parse_lowercase_ident(state.clone()) {
-        Ok((out, state)) => Ok((To::ExistingPackage(out), state)),
+        Ok((ident, state)) => Ok((To::ExistingPackage(ident), state)),
         Err(MadeProgress) => Err((MadeProgress, EProvides::Identifier(pos))),
         Err(_) => match package_name(arena, state) {
-            Ok((out, state)) => Ok((To::NewPackage(out), state)),
+            Ok((name, state)) => Ok((To::NewPackage(name), state)),
             Err((p, fail)) => Err((p, EProvides::Package(fail, pos))),
         },
     }

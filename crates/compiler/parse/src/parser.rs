@@ -762,21 +762,26 @@ pub fn collection_inner<'a, Elem: 'a + crate::ast::Spaceable<'a> + Clone, E: 'a 
             break;
         }
         state.inc_mut();
-        match eat_nc::<'a, E>(arena, state.clone(), false) {
-            Ok((_, (spb, _), news)) => {
-                let (elem, news) = match elem_p(arena, news) {
-                    Ok(ok) => ok,
-                    Err(_) => break,
-                };
-                let (item, news) = match eat_nc::<'a, E>(arena, news.clone(), false) {
-                    Ok((_, (spa, _), news)) => (elem.spaced_around(arena, spb, spa), news),
-                    Err(_) => (elem.spaced_before(arena, spb), news),
-                };
-                items.push(item);
-                state = news;
-            }
+
+        let (_, (spaces_before, _), next) = match eat_nc::<'a, E>(arena, state.clone(), false) {
+            Ok(ok) => ok,
             Err(_) => break,
-        }
+        };
+
+        let (item, next) = match elem_p(arena, next) {
+            Ok(ok) => ok,
+            Err(_) => break,
+        };
+
+        let (item, next) = match eat_nc::<'a, E>(arena, next.clone(), false) {
+            Ok((_, (spaces_after, _), next)) => {
+                (item.spaced_around(arena, spaces_before, spaces_after), next)
+            }
+            Err(_) => (item.spaced_before(arena, spaces_before), next),
+        };
+
+        items.push(item);
+        state = next;
     }
 
     let (_, (final_spaces, _), state) = eat_nc(arena, state, true)?;

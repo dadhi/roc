@@ -31,6 +31,29 @@ pub trait SpacedBuilder<'a, T: 'a + Spaceable<'a>> {
     }
 }
 
+impl<'a, T> SpacedBuilder<'a, T> for T
+where
+    T: 'a + Spaceable<'a>,
+{
+    #[inline(always)]
+    fn spaced_before(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
+        } else {
+            arena.alloc(self).before(spaces)
+        }
+    }
+
+    #[inline(always)]
+    fn spaced_after(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
+        } else {
+            arena.alloc(self).after(spaces)
+        }
+    }
+}
+
 impl<'a, T> SpacedBuilder<'a, T> for Loc<T>
 where
     T: 'a + Spaceable<'a>,

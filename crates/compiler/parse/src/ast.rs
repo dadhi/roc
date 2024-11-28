@@ -1386,6 +1386,22 @@ impl<'a> Defs<'a> {
         self.space_after.push(after);
     }
 
+    fn push_def_before_help(
+        &mut self,
+        tag: EitherIndex<TypeDef<'a>, ValueDef<'a>>,
+        region: Region,
+        spaces_before: &[CommentOrNewline<'a>],
+    ) {
+        self.tags.push(tag);
+
+        self.regions.push(region);
+
+        let before = slice_extend_new(&mut self.spaces, spaces_before.iter().copied());
+        self.space_before.push(before);
+
+        self.space_after.push(Slice::point(self.spaces.len()));
+    }
+
     pub fn push_value_def(
         &mut self,
         value_def: ValueDef<'a>,
@@ -1396,6 +1412,17 @@ impl<'a> Defs<'a> {
         let value_def_index = index_push_new(&mut self.value_defs, value_def);
         let tag = EitherIndex::from_right(value_def_index);
         self.push_def_help(tag, region, spaces_before, spaces_after)
+    }
+
+    pub fn push_value_def_before(
+        &mut self,
+        def: ValueDef<'a>,
+        region: Region,
+        spaces_before: &[CommentOrNewline<'a>],
+    ) {
+        let value_def_index = index_push_new(&mut self.value_defs, def);
+        let tag = EitherIndex::from_right(value_def_index);
+        self.push_def_before_help(tag, region, spaces_before)
     }
 
     /// Replace with `value_def` at the given index

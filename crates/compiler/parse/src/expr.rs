@@ -37,6 +37,16 @@ use roc_region::all::{Loc, Position, Region};
 
 use crate::parser::Progress::{self, *};
 
+pub fn expr_end<'a>() -> impl Parser<'a, (), EExpr<'a>> {
+    |_arena, state: State<'a>, _min_indent: u32| {
+        if state.has_reached_end() {
+            Ok((NoProgress, (), state))
+        } else {
+            Err((NoProgress, EExpr::BadExprEnd(state.pos())))
+        }
+    }
+}
+
 pub fn test_parse_expr<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
@@ -554,10 +564,6 @@ fn parse_stmt<'a>(
             b'e' => match eat_keyword(keyword::EXPECT, &state) {
                 0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
                 n => rest_of_expect_stmt(start, flags, comment_region, arena, state.leap(n)),
-            },
-            b'd' => match eat_keyword(keyword::DBG, &state) {
-                0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
-                n => rest_of_dbg_stmt(start, flags, comment_region, arena, state.leap(n)),
             },
             b'r' => match eat_keyword(keyword::RETURN, &state) {
                 0 => parse_stmt_operator_chain(flags, arena, state, min_indent),
@@ -2726,34 +2732,6 @@ fn rest_of_return_stmt<'a>(
     }
 }
 
-fn rest_of_dbg_stmt<'a>(
-    start: Position,
-    flags: ExprParseFlags,
-    preceding_comment: Region,
-    arena: &'a Bump,
-    state: State<'a>,
-) -> ParseResult<'a, Loc<Stmt<'a>>, EExpr<'a>> {
-    let inc_indent = state.line_indent() + 1;
-    match parse_block(
-        flags,
-        arena,
-        state,
-        inc_indent,
-        EExpect::IndentCondition,
-        EExpect::Condition,
-        None,
-    ) {
-        Ok((condition, state)) => {
-            let vd = ValueDef::Dbg {
-                condition: arena.alloc(condition),
-                preceding_comment,
-            };
-            Ok((state.loc(start, Stmt::ValueDef(vd)), state))
-        }
-        Err((_, fail)) => Err((MadeProgress, EExpr::Dbg(fail, start))),
-    }
-}
-
 fn parse_module_import<'a>(
     arena: &'a Bump,
     state: State<'a>,
@@ -3193,8 +3171,43 @@ fn stmts_to_defs<'a>(
             }
             Stmt::Expr(e) => {
                 if i + 1 < stmts.len() {
-                    let def = ValueDef::Stmt(arena.alloc(Loc::at(region, e)));
-                    defs.push_value_def_before(def, region, before);
+                    if let Expr::Apply(
+                        Loc {
+                            value: Expr::Dbg, ..
+                        },
+                        args,
+                        _,
+                    ) = e
+                    {
+                        if args.len() != 1 {
+                            // TODO: this should be done in can, not parsing!
+                            return Err(EExpr::Dbg(
+                                EExpect::DbgArity(sp_stmt.item.region.start()),
+                                sp_stmt.item.region.start(),
+                            ));
+                        }
+                        let condition = &args[0];
+                        let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
+                        let e = Expr::DbgStmt(condition, arena.alloc(rest));
+
+                        let e = if sp_stmt.before.is_empty() {
+                            e
+                        } else {
+                            arena.alloc(e).before(sp_stmt.before)
+                        };
+
+                        last_expr = Some(Loc::at(sp_stmt.item.region, e));
+
+                        // don't re-process the rest of the statements; they got consumed by the dbg expr
+                        break;
+                    } else {
+                        defs.push_value_def(
+                            ValueDef::Stmt(arena.alloc(Loc::at(sp_stmt.item.region, e))),
+                            sp_stmt.item.region,
+                            sp_stmt.before,
+                            &[],
+                        );
+                    }
                 } else {
                     let e = e.spaced_before(arena, before);
                     last_expr = Some(Loc::at(region, e));

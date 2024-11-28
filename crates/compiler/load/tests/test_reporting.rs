@@ -11053,8 +11053,8 @@ All branches in an `if` must have the same type!
     4│      Recursive := [Infinitely Recursive]
             ^^^^^^^^^
 
-    Recursion in opaquees is only allowed if recursion happens behind a
-    tagged union, at least one variant of which is not recursive.
+    Recursion in opaque types is only allowed if recursion happens behind
+    a tagged union, at least one variant of which is not recursive.
     "
     );
 
@@ -14655,6 +14655,77 @@ All branches in an `if` must have the same type!
     );
 
     test_report!(
+        mismatch_only_early_returns,
+        indoc!(
+            r#"
+            myFunction = \x ->
+                if x == 5 then
+                    return "abc"
+                else
+                    return 123
+
+            myFunction 3
+            "#
+        ),
+        @r###"
+        ── TYPE MISMATCH in /code/proj/Main.roc ────────────────────────────────────────
+        
+        This `return` statement doesn't match the return type of its enclosing
+        function:
+        
+        5│          if x == 5 then
+        6│              return "abc"
+        7│          else
+        8│              return 123
+                        ^^^^^^^^^^
+        
+        This returns a value of type:
+        
+            Num *
+        
+        But I expected the function to have return type:
+        
+            Str
+        "###
+    );
+
+    test_report!(
+        mismatch_early_return_annotated_function,
+        indoc!(
+            r#"
+            myFunction : U64 -> Str
+            myFunction = \x ->
+                if x == 5 then
+                    return 123
+                else
+                    "abc"
+
+            myFunction 3
+            "#
+        ),
+        @r###"
+        ── TYPE MISMATCH in /code/proj/Main.roc ────────────────────────────────────────
+        
+        Something is off with the body of the `myFunction` definition:
+        
+        4│      myFunction : U64 -> Str
+        5│      myFunction = \x ->
+        6│          if x == 5 then
+        7│              return 123
+                        ^^^^^^^^^^
+        
+        This returns a value of type:
+        
+            Num *
+        
+        But the type annotation on `myFunction` says it should be:
+        
+            Str
+
+        "###
+    );
+
+    test_report!(
         leftover_statement,
         indoc!(
             r#"
@@ -14740,7 +14811,7 @@ All branches in an `if` must have the same type!
                 Str.trim msg
             "#
         ),
-        @r###"
+        @r#"
     ── EFFECT IN PURE FUNCTION in /code/proj/Main.roc ──────────────────────────────
 
     This call to `Effect.putLine!` might produce an effect:
@@ -14757,18 +14828,7 @@ All branches in an `if` must have the same type!
 
     You can still run the program with this error, which can be helpful
     when you're debugging.
-
-    ── UNNECESSARY EXCLAMATION in /code/proj/Main.roc ──────────────────────────────
-
-    This function is pure, but its name suggests otherwise:
-
-    5│  main! = \{} ->
-        ^^^^^
-
-    The exclamation mark at the end is reserved for effectful functions.
-
-    Hint: Did you forget to run an effect? Is the type annotation wrong?
-    "###
+    "#
     );
 
     test_report!(
@@ -15351,7 +15411,7 @@ All branches in an `if` must have the same type!
             pureHigherOrder = \f, x -> f x
             "#
         ),
-        @r###"
+        @r#"
     ── TYPE MISMATCH in /code/proj/Main.roc ────────────────────────────────────────
 
     This 1st argument to `pureHigherOrder` has an unexpected type:
@@ -15366,18 +15426,7 @@ All branches in an `if` must have the same type!
     But `pureHigherOrder` needs its 1st argument to be:
 
         Str -> {}
-
-    ── UNNECESSARY EXCLAMATION in /code/proj/Main.roc ──────────────────────────────
-
-    This function is pure, but its name suggests otherwise:
-
-    5│  main! = \{} ->
-        ^^^^^
-
-    The exclamation mark at the end is reserved for effectful functions.
-
-    Hint: Did you forget to run an effect? Is the type annotation wrong?
-    "###
+    "#
     );
 
     test_report!(
@@ -15395,7 +15444,7 @@ All branches in an `if` must have the same type!
             pureHigherOrder = \f, x -> f x
             "#
         ),
-        @r###"
+        @r#"
     ── TYPE MISMATCH in /code/proj/Main.roc ────────────────────────────────────────
 
     This 1st argument to `pureHigherOrder` has an unexpected type:
@@ -15410,17 +15459,6 @@ All branches in an `if` must have the same type!
     But `pureHigherOrder` needs its 1st argument to be:
 
         Str -> {}
-
-    ── UNNECESSARY EXCLAMATION in /code/proj/Main.roc ──────────────────────────────
-
-    This function is pure, but its name suggests otherwise:
-
-    5│  main! = \{} ->
-        ^^^^^
-
-    The exclamation mark at the end is reserved for effectful functions.
-
-    Hint: Did you forget to run an effect? Is the type annotation wrong?
-    "###
+    "#
     );
 }

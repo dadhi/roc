@@ -7,7 +7,7 @@ use crate::ast::{
     ModuleImportParams, Pattern, Spaceable, Spaced, Spaces, SpacesBefore, TryTarget,
     TypeAnnotation, TypeDef, TypeHeader, ValueDef, WhenShortcut,
 };
-use crate::blankspace::{eat_nc, eat_nc_check, eat_nc_loc_c, eat_nc_ok, SpacedBuilder};
+use crate::blankspace::{eat_nc, eat_nc_check, eat_nc_loc_c, eat_nc_or_empty, SpacedBuilder};
 use crate::header::{chomp_module_name, ModuleName};
 use crate::ident::{
     chomp_access_chain, chomp_integer_part, chomp_lowercase_part, malformed_ident,
@@ -36,16 +36,6 @@ use roc_module::called_via::{BinOp, CalledVia, UnaryOp};
 use roc_region::all::{Loc, Position, Region};
 
 use crate::parser::Progress::{self, *};
-
-pub fn expr_end<'a>() -> impl Parser<'a, (), EExpr<'a>> {
-    |_arena, state: State<'a>, _min_indent: u32| {
-        if state.has_reached_end() {
-            Ok((NoProgress, (), state))
-        } else {
-            Err((NoProgress, EExpr::BadExprEnd(state.pos())))
-        }
-    }
-}
 
 pub fn test_parse_expr<'a>(
     arena: &'a bumpalo::Bump,
@@ -1710,7 +1700,7 @@ fn parse_negative_term<'a>(
     expr_state.end = state.pos();
 
     let initial = state.clone();
-    let (spaces, state) = eat_nc_ok(EExpr::IndentEnd, arena, state, min_indent);
+    let (spaces, state) = eat_nc_or_empty(arena, state, min_indent);
     expr_state.spaces_after = spaces;
 
     // TODO: this should probably be handled in the caller, not here
@@ -3182,29 +3172,23 @@ fn stmts_to_defs<'a>(
                         if args.len() != 1 {
                             // TODO: this should be done in can, not parsing!
                             return Err(EExpr::Dbg(
-                                EExpect::DbgArity(sp_stmt.item.region.start()),
-                                sp_stmt.item.region.start(),
+                                EExpect::DbgArity(region.start()),
+                                region.start(),
                             ));
                         }
                         let condition = &args[0];
                         let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
                         let e = Expr::DbgStmt(condition, arena.alloc(rest));
-
-                        let e = if sp_stmt.before.is_empty() {
-                            e
-                        } else {
-                            arena.alloc(e).before(sp_stmt.before)
-                        };
-
-                        last_expr = Some(Loc::at(sp_stmt.item.region, e));
+                        let e = e.spaced_before(arena, before);
+                        last_expr = Some(Loc::at(region, e));
 
                         // don't re-process the rest of the statements; they got consumed by the dbg expr
                         break;
                     } else {
                         defs.push_value_def(
-                            ValueDef::Stmt(arena.alloc(Loc::at(sp_stmt.item.region, e))),
-                            sp_stmt.item.region,
-                            sp_stmt.before,
+                            ValueDef::Stmt(arena.alloc(Loc::at(region, e))),
+                            region,
+                            before,
                             &[],
                         );
                     }

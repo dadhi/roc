@@ -1,5 +1,6 @@
 use crate::ast::CommentOrNewline;
 use crate::ast::Spaceable;
+use crate::parser::EExpr;
 use crate::parser::ParseResult;
 use crate::parser::Progress;
 use crate::parser::SpaceProblem;
@@ -350,16 +351,12 @@ where
 }
 
 #[inline(always)]
-pub fn eat_nc_ok<'a, E>(
-    indent_problem: fn(Position) -> E,
+pub fn eat_nc_or_empty<'a>(
     arena: &'a Bump,
     state: State<'a>,
     min_indent: u32,
-) -> (&'a [CommentOrNewline<'a>], State<'a>)
-where
-    E: 'a + SpaceProblem,
-{
-    match eat_nc_check(indent_problem, arena, state.clone(), min_indent, false) {
+) -> (&'a [CommentOrNewline<'a>], State<'a>) {
+    match eat_nc_check(EExpr::Start, arena, state.clone(), min_indent, false) {
         Ok((_, out, state)) => (out, state),
         Err(_) => (&[] as &[_], state),
     }

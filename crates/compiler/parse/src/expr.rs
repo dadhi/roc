@@ -41,7 +41,7 @@ pub fn test_parse_expr<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
 ) -> Result<Loc<Expr<'a>>, SyntaxError<'a>> {
-    let (_, spaces_before, state) = eat_nc_check(EExpr::IndentStart, arena, state, 0, false)
+    let (_, (spaces_before, _), state) = eat_nc(arena, state, false)
         .map_err(|(_, fail)| SyntaxError::Expr(fail, Position::default()))?;
 
     let (expr, state) = parse_expr_block(CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING, arena, state)
@@ -57,8 +57,6 @@ pub fn test_parse_expr<'a>(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExprParseFlags(u8);
-
-pub const NO_EXPR_PARSE_FLAGS: ExprParseFlags = ExprParseFlags(0);
 
 /// Check for and accept multi-backpassing syntax
 /// This is usually true, but false within list/record literals
@@ -1880,7 +1878,7 @@ pub fn parse_expr_block<'a>(
 
     let expr = stmts_to_expr(&stmts, arena).map_err(|e| (MadeProgress, arena.alloc(e).clone()))?;
 
-    let (_, spaces_after, state) = eat_nc_check(EExpr::IndentEnd, arena, state, 0, true)?;
+    let (_, (spaces_after, _), state) = eat_nc(arena, state, true)?;
     let expr = expr.spaced_after(arena, spaces_after);
 
     Ok((expr, state))
@@ -3159,15 +3157,15 @@ fn stmts_to_defs<'a>(
                 // don't re-process the rest of the statements, they got consumed by the early return
                 break;
             }
-            Stmt::Expr(e) => {
-                if i + 1 < stmts.len() {
+            Stmt::Expr(expr) => {
+                if i < stmts.len() - 1 {
                     if let Expr::Apply(
                         Loc {
                             value: Expr::Dbg, ..
                         },
                         args,
-                        _,
-                    ) = e
+                        _called_via,
+                    ) = expr
                     {
                         if args.len() != 1 {
                             // TODO: this should be done in can, not parsing!
@@ -3178,22 +3176,18 @@ fn stmts_to_defs<'a>(
                         }
                         let condition = &args[0];
                         let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
-                        let e = Expr::DbgStmt(condition, arena.alloc(rest));
-                        let e = e.spaced_before(arena, before);
-                        last_expr = Some(Loc::at(region, e));
+                        let expr = Expr::DbgStmt(condition, arena.alloc(rest));
+                        let expr = expr.spaced_before(arena, before);
+                        last_expr = Some(Loc::at(region, expr));
 
                         // don't re-process the rest of the statements; they got consumed by the dbg expr
                         break;
                     } else {
-                        defs.push_value_def(
-                            ValueDef::Stmt(arena.alloc(Loc::at(region, e))),
-                            region,
-                            before,
-                            &[],
-                        );
+                        let value_def = ValueDef::Stmt(arena.alloc(Loc::at(region, expr)));
+                        defs.push_value_def_before(value_def, region, before);
                     }
                 } else {
-                    let e = e.spaced_before(arena, before);
+                    let e = expr.spaced_before(arena, before);
                     last_expr = Some(Loc::at(region, e));
                 }
             }
@@ -3204,10 +3198,11 @@ fn stmts_to_defs<'a>(
 
                 let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
 
-                let e = Expr::Backpassing(arena.alloc(pats), arena.alloc(call), arena.alloc(rest));
+                let expr =
+                    Expr::Backpassing(arena.alloc(pats), arena.alloc(call), arena.alloc(rest));
 
-                let e = e.spaced_before(arena, before);
-                last_expr = Some(Loc::pos(region.start(), rest.region.end(), e));
+                let expr = expr.spaced_before(arena, before);
+                last_expr = Some(Loc::pos(region.start(), rest.region.end(), expr));
 
                 // don't re-process the rest of the statements; they got consumed by the backpassing
                 break;
@@ -3250,7 +3245,7 @@ fn stmts_to_defs<'a>(
                         );
 
                         let region = Region::span_across(&header.name.region, &region);
-                        defs.push_value_def(value_def, region, before, &[]);
+                        defs.push_value_def_before(value_def, region, before);
 
                         i += 1;
                     } else {
@@ -3270,7 +3265,7 @@ fn stmts_to_defs<'a>(
                 } = vd
                 {
                     if exprify_dbg {
-                        let e = if i + 1 < stmts.len() {
+                        let expr = if i + 1 < stmts.len() {
                             let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
                             Expr::DbgStmt(arena.alloc(condition), arena.alloc(rest))
                         } else {
@@ -3281,8 +3276,8 @@ fn stmts_to_defs<'a>(
                             )
                         };
 
-                        let e = e.spaced_before(arena, before);
-                        last_expr = Some(Loc::at(region, e));
+                        let expr = expr.spaced_before(arena, before);
+                        last_expr = Some(Loc::at(region, expr));
 
                         // don't re-process the rest of the statements; they got consumed by the dbg expr
                         break;
@@ -3311,13 +3306,13 @@ fn stmts_to_defs<'a>(
 
                         let region =
                             roc_region::all::Region::span_across(&ann_pattern.region, &region);
-                        defs.push_value_def(value_def, region, before, &[]);
+                        defs.push_value_def_before(value_def, region, before);
                         i += 1;
                     } else {
-                        defs.push_value_def(vd, region, before, &[])
+                        defs.push_value_def_before(vd, region, before)
                     }
                 } else {
-                    defs.push_value_def(vd, region, before, &[])
+                    defs.push_value_def_before(vd, region, before)
                 }
             }
         }
@@ -3600,7 +3595,7 @@ fn rest_of_record<'a>(
     // and then in canonicalization verify that it's an Expr::Var
     // (and not e.g. an `Expr::Access`) and extract its string.
     let prev = state.clone();
-    let (prefix, state) = match eat_nc::<'_, ERecord<'_>>(arena, state, false) {
+    let (prefix, state) = match eat_nc::<ERecord>(arena, state, false) {
         Err(_) => (None, prev),
         Ok((_, (spaces_before, _), state)) => {
             let ident_at = state.pos();
@@ -3608,7 +3603,7 @@ fn rest_of_record<'a>(
                 Err(_) => (None, prev),
                 Ok((ident, state)) => {
                     let ident = state.loc(ident_at, ident_to_expr(arena, ident, None));
-                    match eat_nc::<'_, ERecord<'_>>(arena, state, false) {
+                    match eat_nc::<ERecord>(arena, state, false) {
                         Err(_) => (None, prev),
                         Ok((_, (spaces_after, _), state)) => {
                             let ident = ident.spaced_around(arena, spaces_before, spaces_after);

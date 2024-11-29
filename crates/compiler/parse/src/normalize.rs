@@ -1381,9 +1381,6 @@ impl<'a> Normalize<'a> for ETypeRecord<'a> {
                 ETypeRecord::Type(arena.alloc(inner_err.normalize(arena)), Position::zero())
             }
             ETypeRecord::Space(inner_err, _) => ETypeRecord::Space(*inner_err, Position::zero()),
-            ETypeRecord::IndentColon(_) => ETypeRecord::IndentColon(Position::zero()),
-            ETypeRecord::IndentOptional(_) => ETypeRecord::IndentOptional(Position::zero()),
-            ETypeRecord::IndentEnd(_) => ETypeRecord::IndentEnd(Position::zero()),
         }
     }
 }
@@ -1620,7 +1617,6 @@ impl<'a> Normalize<'a> for EPackageEntry<'a> {
             }
             EPackageEntry::Shorthand(_) => EPackageEntry::Shorthand(Position::zero()),
             EPackageEntry::Colon(_) => EPackageEntry::Colon(Position::zero()),
-            EPackageEntry::IndentPackage(_) => EPackageEntry::IndentPackage(Position::zero()),
             EPackageEntry::IndentPlatform(_) => EPackageEntry::IndentPlatform(Position::zero()),
             EPackageEntry::Space(inner_err, _) => {
                 EPackageEntry::Space(*inner_err, Position::zero())
@@ -1721,12 +1717,10 @@ impl<'a> Normalize<'a> for ETypedIdent<'a> {
         match self {
             ETypedIdent::Space(inner_err, _) => ETypedIdent::Space(*inner_err, Position::zero()),
             ETypedIdent::HasType(_) => ETypedIdent::HasType(Position::zero()),
-            ETypedIdent::IndentHasType(_) => ETypedIdent::IndentHasType(Position::zero()),
             ETypedIdent::Name(_) => ETypedIdent::Name(Position::zero()),
             ETypedIdent::Type(inner_err, _) => {
                 ETypedIdent::Type(inner_err.normalize(arena), Position::zero())
             }
-            ETypedIdent::IndentType(_) => ETypedIdent::IndentType(Position::zero()),
             ETypedIdent::Identifier(_) => ETypedIdent::Identifier(Position::zero()),
         }
     }

@@ -290,8 +290,8 @@ fn parse_list_rest_pattern<'a>(
     let no_as = Loc::at(dots_at, Pattern::ListRest(None));
 
     let pattern_state = state.clone();
-    let (pattern_spaces, state) = match eat_nc_check(EPattern::AsKeyword, arena, state, 0, false) {
-        Ok((_, pattern_spaces, state)) => (pattern_spaces, state),
+    let (pattern_spaces, state) = match eat_nc::<PList>(arena, state, false) {
+        Ok((_, (pattern_spaces, _), state)) => (pattern_spaces, state),
         Err(_) => return Ok((no_as, pattern_state)),
     };
 

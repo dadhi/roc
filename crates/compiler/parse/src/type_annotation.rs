@@ -2,7 +2,7 @@ use crate::ast::{
     AbilityImpls, AssignedField, Expr, FunctionArrow, ImplementsAbilities, ImplementsAbility,
     ImplementsClause, Pattern, Spaceable, Spaced, Tag, TypeAnnotation, TypeHeader,
 };
-use crate::blankspace::{eat_nc_check, eat_nc_or_empty, SpacedBuilder};
+use crate::blankspace::{eat_nc, eat_nc_check, eat_nc_or_empty, SpacedBuilder};
 use crate::expr::parse_record_field;
 use crate::ident::{
     chomp_concrete_type, chomp_lowercase_part, chomp_uppercase_part, parse_lowercase_ident,
@@ -259,14 +259,14 @@ fn parse_tag_type<'a>(
     loop {
         let prev_state = state.clone();
 
-        let (_, spaces_before, next_state) =
-            match eat_nc_check(EType::TIndentStart, arena, state, 0, false) {
-                Ok(ok) => ok,
-                Err(_) => {
-                    state = prev_state;
-                    break;
-                }
-            };
+        let (_, (spaces_before, _), next_state) = match eat_nc::<ETypeTagUnion>(arena, state, false)
+        {
+            Ok(ok) => ok,
+            Err(_) => {
+                state = prev_state;
+                break;
+            }
+        };
 
         match parse_term(PARSE_APPLIED_ARG, arena, next_state, 0) {
             Ok((ann, next_state)) => {
@@ -311,14 +311,13 @@ fn record_type_field<'a>(
 
     let loc_label = state.loc(start, label);
 
-    let (_, spaces, state) = eat_nc_check(ETypeRecord::IndentEnd, arena, state, 0, false)?;
+    let (_, (spaces, _), state) = eat_nc(arena, state, false)?;
 
     // Having a value is optional; both `{ email }` and `{ email: blah }` work.
     // (This is true in both literals and types.)
     if state.bytes().first() == Some(&b':') {
         let state = state.inc();
-        let (sp_pr, spaces_before, state) =
-            eat_nc_check(ETypeRecord::IndentColon, arena, state, 0, false)?;
+        let (sp_pr, (spaces_before, _), state) = eat_nc(arena, state, false)?;
 
         let val_pos = state.pos();
         let (loc_val, state) = parse_type_expr(
@@ -335,8 +334,7 @@ fn record_type_field<'a>(
         Ok((state.loc(start, req_val), state))
     } else if state.bytes().first() == Some(&b'?') {
         let state = state.inc();
-        let (sp, spaces_before, state) =
-            eat_nc_check(ETypeRecord::IndentOptional, arena, state, 0, false)?;
+        let (sp_pr, (spaces_before, _), state) = eat_nc(arena, state, false)?;
 
         let val_pos = state.pos();
         let (loc_val, state) = parse_type_expr(
@@ -345,7 +343,7 @@ fn record_type_field<'a>(
             state,
             0,
         )
-        .map_err(|(ep, fail)| (ep.or(sp), ETypeRecord::Type(arena.alloc(fail), val_pos)))?;
+        .map_err(|(ep, fail)| (ep.or(sp_pr), ETypeRecord::Type(arena.alloc(fail), val_pos)))?;
 
         let loc_val = loc_val.spaced_before(arena, spaces_before);
         let opt_val = OptionalValue(loc_label, spaces, arena.alloc(loc_val));
@@ -572,9 +570,9 @@ fn parse_implements_ability<'a>(
     let ability = state.loc(start, type_ann);
 
     let olds = state.clone();
-    let (impls, state) = match eat_nc_check(EType::TIndentEnd, arena, state, 0, false) {
+    let (impls, state) = match eat_nc::<EType>(arena, state, false) {
         Err(_) => (None, olds),
-        Ok((_, spaces_before, state)) => {
+        Ok((_, (spaces_before, _), state)) => {
             let impls_pos = state.pos();
             if state.bytes().first() != Some(&b'{') {
                 (None, olds)

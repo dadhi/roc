@@ -25,10 +25,6 @@ pub fn parse_problem<'a>(
     )
 }
 
-fn note_for_record_type_indent<'a>(alloc: &'a RocDocAllocator<'a>) -> RocDocBuilder<'a> {
-    alloc.note("I may be confused by indentation")
-}
-
 fn hint_for_tag_name<'a>(alloc: &'a RocDocAllocator<'a>) -> RocDocBuilder<'a> {
     alloc.concat([
         alloc.hint("Tag names "),
@@ -2787,69 +2783,6 @@ fn to_trecord_report<'a>(
 
         ETypeRecord::Type(tipe, pos) => to_type_report(alloc, lines, filename, tipe, pos),
 
-        ETypeRecord::IndentEnd(pos) => {
-            match next_line_starts_with_close_curly(alloc.src_lines, lines.convert_pos(pos)) {
-                Some(curly_pos) => {
-                    let surroundings = LineColumnRegion::new(lines.convert_pos(start), curly_pos);
-                    let region = LineColumnRegion::from_pos(curly_pos);
-
-                    let doc = alloc.stack([
-                        alloc.reflow(
-                            "I am partway through parsing a record type, but I got stuck here:",
-                        ),
-                        alloc.region_with_subregion(surroundings, region, severity),
-                        alloc.concat([
-                            alloc.reflow("I need this curly brace to be indented more. Try adding more spaces before it!"),
-                        ]),
-                    ]);
-
-                    Report {
-                        filename,
-                        doc,
-                        title: "NEED MORE INDENTATION".to_string(),
-                        severity,
-                    }
-                }
-                None => {
-                    let surroundings = Region::new(start, pos);
-                    let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
-
-                    let doc = alloc.stack([
-                        alloc.reflow(
-                            r"I am partway through parsing a record type, but I got stuck here:",
-                        ),
-                        alloc.region_with_subregion(
-                            lines.convert_region(surroundings),
-                            region,
-                            severity,
-                        ),
-                        alloc.concat([
-                            alloc.reflow("I was expecting to see a closing curly "),
-                            alloc.reflow("brace before this, so try adding a "),
-                            alloc.parser_suggestion("}"),
-                            alloc.reflow(" and see if that helps?"),
-                        ]),
-                        note_for_record_type_indent(alloc),
-                    ]);
-
-                    Report {
-                        filename,
-                        doc,
-                        title: "UNFINISHED RECORD TYPE".to_string(),
-                        severity,
-                    }
-                }
-            }
-        }
-
-        ETypeRecord::IndentColon(_) => {
-            unreachable!("because `foo` is a valid field; the colon is not required")
-        }
-
-        ETypeRecord::IndentOptional(_) => {
-            unreachable!("because `foo` is a valid field; the question mark is not required")
-        }
-
         ETypeRecord::Space(error, pos) => to_space_report(alloc, lines, filename, &error, pos),
     }
 }
@@ -4105,31 +4038,6 @@ pub fn starts_with_keyword(rest_of_line: &str, keyword: &str) -> bool {
         }
     } else {
         false
-    }
-}
-
-fn next_line_starts_with_close_curly(source_lines: &[&str], pos: LineColumn) -> Option<LineColumn> {
-    next_line_starts_with_char(source_lines, pos, '}')
-}
-
-fn next_line_starts_with_char(
-    source_lines: &[&str],
-    pos: LineColumn,
-    character: char,
-) -> Option<LineColumn> {
-    match source_lines.get(pos.line as usize + 1) {
-        None => None,
-
-        Some(line) => {
-            let spaces_dropped = line.trim_start_matches(' ');
-            match spaces_dropped.chars().next() {
-                Some(c) if c == character => Some(LineColumn {
-                    line: pos.line + 1,
-                    column: (line.len() - spaces_dropped.len()) as u32,
-                }),
-                _ => None,
-            }
-        }
     }
 }
 

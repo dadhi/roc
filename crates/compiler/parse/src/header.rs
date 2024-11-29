@@ -4,7 +4,7 @@ use crate::ast::{
     Collection, CommentOrNewline, Defs, Header, Malformed, Pattern, Spaced, Spaces, SpacesBefore,
     StrLiteral, TypeAnnotation,
 };
-use crate::blankspace::{eat_nc_check, SpacedBuilder};
+use crate::blankspace::{eat_nc, eat_nc_check, SpacedBuilder};
 use crate::expr::merge_spaces;
 use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseIdent};
 use crate::parser::Progress::{self, *};
@@ -49,7 +49,7 @@ pub fn header<'a>(
     arena: &'a bumpalo::Bump,
     state: State<'a>,
 ) -> ParseResult<'a, SpacesBefore<'a, Header<'a>>, EHeader<'a>> {
-    let (_, before, state) = eat_nc_check(EHeader::IndentStart, arena, state, 0, false)?;
+    let (_, (before, _), state) = eat_nc(arena, state, false)?;
 
     let inc_indent = 1;
     let n = eat_keyword("module", &state);
@@ -1067,16 +1067,14 @@ pub fn parse_typed_ident<'a>(
         parse_lowercase_ident(state).map_err(|p| (p, ETypedIdent::Identifier(start)))?;
     let ident = state.loc(start, ident);
 
-    let (_, spaces_before_colon, state) =
-        eat_nc_check(ETypedIdent::IndentHasType, arena, state, 0, true)?;
+    let (_, (spaces_before_colon, _), state) = eat_nc(arena, state, true)?;
 
     if state.bytes().first() != Some(&b':') {
         return Err((MadeProgress, ETypedIdent::HasType(state.pos())));
     }
     let state = state.inc();
 
-    let (_, spaces_after_colon, state) =
-        eat_nc_check(ETypedIdent::IndentType, arena, state, 0, true)?;
+    let (_, (spaces_after_colon, _), state) = eat_nc(arena, state, true)?;
 
     let ann_pos = state.pos();
     match parse_type_expr(
@@ -1162,12 +1160,12 @@ fn imports_entry<'a>(
     let (_, file_name, state) = parse_str_literal(arena, state)
         .map_err(|(p, _)| (p, EImports::StrLiteral(file_name_pos)))?;
 
-    let (.., state) = eat_nc_check(EImports::AsKeyword, arena, state, 0, true)?;
+    let (.., state) = eat_nc(arena, state, true)?;
     if !state.bytes().starts_with(b"as") {
         return Err((MadeProgress, EImports::AsKeyword(state.pos())));
     }
     let state = state.leap(2);
-    let (.., state) = eat_nc_check(EImports::AsKeyword, arena, state, 0, true)?;
+    let (.., state) = eat_nc(arena, state, true)?;
 
     // e.g. file : Str
     let ident_pos = state.pos();
@@ -1583,30 +1581,27 @@ pub fn parse_package_entry<'a>(
             Err(_) => return Err((MadeProgress, EPackageEntry::Shorthand(ident_pos))),
         };
 
-        let (_, spaces_before_colon, state) =
-            eat_nc_check(EPackageEntry::IndentPackage, arena, state, 0, true)?;
+        let (_, (spaces_before_colon, _), state) = eat_nc(arena, state, true)?;
 
         if state.bytes().first() != Some(&b':') {
             return Err((MadeProgress, EPackageEntry::Colon(state.pos())));
         }
         let state = state.inc();
 
-        let (_, spaces_after_colon, state) =
-            eat_nc_check(EPackageEntry::IndentPackage, arena, state, 0, true)?;
+        let (_, (spaces_after_colon, _), state) = eat_nc(arena, state, true)?;
 
         let out = ((ident, spaces_before_colon), spaces_after_colon);
         Ok((MadeProgress, Some(out), state))
     };
 
     let plat_parser = move |arena: &'a bumpalo::Bump, state: State<'a>| {
-        let olds = state.clone();
+        let prev = state.clone();
         let n = eat_keyword(crate::keyword::PLATFORM, &state);
         let (p, sp, state) = if n > 0 {
-            let (_, sp, state) =
-                eat_nc_check(EPackageEntry::IndentPackage, arena, state.leap(n), 0, true)?;
+            let (_, (sp, _), state) = eat_nc(arena, state.leap(n), true)?;
             (MadeProgress, Some(sp), state)
         } else {
-            (NoProgress, None, olds)
+            (NoProgress, None, prev)
         };
 
         let name_pos = state.pos();

@@ -185,10 +185,8 @@ pub enum ERequires<'a> {
 pub enum ETypedIdent<'a> {
     Space(BadInputError, Position),
     HasType(Position),
-    IndentHasType(Position),
     Name(Position),
     Type(EType<'a>, Position),
-    IndentType(Position),
     Identifier(Position),
 }
 
@@ -217,7 +215,6 @@ pub enum EPackageEntry<'a> {
     BadPackage(EPackageName<'a>, Position),
     Shorthand(Position),
     Colon(Position),
-    IndentPackage(Position),
     IndentPlatform(Position),
     Space(BadInputError, Position),
 }
@@ -626,10 +623,6 @@ pub enum ETypeRecord<'a> {
     Type(&'a EType<'a>, Position),
 
     Space(BadInputError, Position),
-
-    IndentColon(Position),
-    IndentOptional(Position),
-    IndentEnd(Position),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

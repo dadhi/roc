@@ -1,9 +1,9 @@
 use bumpalo::Bump;
 use roc_parse::{
     ast,
-    blankspace::{eat_nc_check, eat_nc_or_empty, SpacedBuilder},
+    blankspace::{eat_nc, eat_nc_or_empty, SpacedBuilder},
     expr::{parse_expr_block, ACCEPT_MULTI_BACKPASSING, CHECK_FOR_ARROW},
-    parser::{EExpr, SourceError, SyntaxError},
+    parser::{SourceError, SyntaxError},
     state::State,
 };
 use roc_region::all::{Loc, Position};
@@ -37,9 +37,9 @@ impl ParseExpr {
         let state = State::new(original_bytes);
 
         let arena = &self.arena;
-        let out = match eat_nc_check(EExpr::IndentStart, arena, state, 0, false) {
+        let out = match eat_nc(arena, state, false) {
             Err((_, fail)) => Err(fail),
-            Ok((_, spaces_before, state)) => {
+            Ok((_, (spaces_before, _), state)) => {
                 match parse_expr_block(CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING, arena, state) {
                     Err((_, fail)) => Err(fail),
                     Ok((expr, state)) => {

@@ -132,7 +132,7 @@ fn parse_term<'a>(
                     None => {
                         if parse_applied_arg {
                             match parse_concrete_type(state) {
-                                Ok((out, state)) => (state.loc(start, out), state),
+                                Ok((ann, state)) => (state.loc(start, ann), state),
                                 Err((NoProgress, _)) => {
                                     return Err((NoProgress, EType::TStart(start)))
                                 }
@@ -257,25 +257,24 @@ fn parse_tag_type<'a>(
     let mut state = state;
     let mut args = Vec::with_capacity_in(1, arena);
     loop {
-        let prev_state = state.clone();
+        let prev = state.clone();
 
-        let (_, (spaces_before, _), next_state) = match eat_nc::<ETypeTagUnion>(arena, state, false)
-        {
+        let (_, (spaces_before, _), next) = match eat_nc::<ETypeTagUnion>(arena, state, false) {
             Ok(ok) => ok,
             Err(_) => {
-                state = prev_state;
+                state = prev;
                 break;
             }
         };
 
-        match parse_term(PARSE_APPLIED_ARG, arena, next_state, 0) {
+        match parse_term(PARSE_APPLIED_ARG, arena, next, 0) {
             Ok((ann, next_state)) => {
                 let type_ann = ann.spaced_before(arena, spaces_before);
                 args.push(type_ann);
                 state = next_state;
             }
             Err((NoProgress, _)) => {
-                state = prev_state;
+                state = prev;
                 break;
             }
             Err((_, fail)) => {

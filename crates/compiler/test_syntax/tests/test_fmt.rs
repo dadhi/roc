@@ -6905,7 +6905,7 @@ mod test_fmt {
         ));
     }
 
-    #[test]
+    #[test] // todo: @wip debug me to see how statements are converted into the definitions and the result expression
     fn preserve_annotated_body() {
         expr_formats_same(indoc!(
             r"

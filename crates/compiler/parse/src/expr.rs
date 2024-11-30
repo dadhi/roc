@@ -99,6 +99,7 @@ fn rest_of_expr_in_parens_etc<'a>(
         parse_expr_block(CHECK_FOR_ARROW, a, state)
             .map_err(|(p, fail)| (p, EInParens::Expr(a.alloc(fail), pos)))
     };
+
     let (elems, state) = collection_inner(arena, state, elem_p, Expr::SpaceBefore)
         .map_err(|(_, fail)| (MadeProgress, EExpr::InParens(fail, start)))?;
 
@@ -3079,50 +3080,53 @@ fn stmts_to_expr<'a>(
     stmts: &[SpacesBefore<'a, Loc<Stmt<'a>>>],
     arena: &'a Bump,
 ) -> Result<Loc<Expr<'a>>, EExpr<'a>> {
-    if stmts.len() > 1 {
-        let first_pos = stmts.first().unwrap().item.region.start();
-        let last_pos = stmts.last().unwrap().item.region.end();
+    match stmts {
+        [] => unreachable!("stmts_to_expr called with no statements"),
+        [first, .., last] => {
+            let first_pos = first.item.region.start();
+            let last_pos = last.item.region.end();
 
-        let (defs, last_expr) = stmts_to_defs(stmts, Defs::default(), true, arena)?;
+            let (defs, last_expr) = stmts_to_defs(stmts, Defs::default(), true, arena)?;
 
-        let final_expr = match last_expr {
-            Some(e) => e,
-            None => return Err(EExpr::DefMissingFinalExpr(last_pos)),
-        };
+            let final_expr = match last_expr {
+                Some(expr) => expr,
+                None => return Err(EExpr::DefMissingFinalExpr(last_pos)),
+            };
 
-        if defs.is_empty() {
-            Ok(final_expr)
-        } else {
-            let defs = Expr::Defs(arena.alloc(defs), arena.alloc(final_expr));
-            Ok(Loc::pos(first_pos, last_pos, defs))
+            if defs.is_empty() {
+                Ok(final_expr)
+            } else {
+                let defs = Expr::Defs(arena.alloc(defs), arena.alloc(final_expr));
+                Ok(Loc::pos(first_pos, last_pos, defs))
+            }
         }
-    } else {
-        let SpacesBefore {
-            before: space,
+        [SpacesBefore {
+            before: spaces_before,
             item: Loc {
                 region: stmt_at,
                 value: stmt,
             },
-        } = *stmts.last().unwrap();
-        let expr = match stmt {
-            Stmt::Expr(e) => e.spaced_before(arena, space),
-            Stmt::ValueDef(ValueDef::Dbg { condition, .. }) => {
-                // If we parse a `dbg` as the last thing in a series of statements then it's
-                // actually an expression.
-                let dbg = Loc::at(stmt_at, Expr::Dbg);
-                Expr::Apply(arena.alloc(dbg), arena.alloc([condition]), CalledVia::Space)
-            }
-            Stmt::ValueDef(ValueDef::Expect { .. }) => {
-                let end = stmt_at.end();
-                let fail = EExpect::Continuation(arena.alloc(EExpr::IndentEnd(end)), end);
-                return Err(EExpr::Expect(fail, stmt_at.start()));
-            }
-            Stmt::Backpassing(..) | Stmt::TypeDef(_) | Stmt::ValueDef(_) => {
-                return Err(EExpr::IndentEnd(stmt_at.end()))
-            }
-        };
+        }] => {
+            let expr = match *stmt {
+                Stmt::Expr(expr) => expr.spaced_before(arena, spaces_before),
+                Stmt::ValueDef(ValueDef::Dbg { condition, .. }) => {
+                    // If we parse a `dbg` as the last thing in a series of statements then it's
+                    // actually an expression.
+                    let dbg = Loc::at(*stmt_at, Expr::Dbg);
+                    Expr::Apply(arena.alloc(dbg), arena.alloc([condition]), CalledVia::Space)
+                }
+                Stmt::ValueDef(ValueDef::Expect { .. }) => {
+                    let end = stmt_at.end();
+                    let fail = EExpect::Continuation(arena.alloc(EExpr::IndentEnd(end)), end);
+                    return Err(EExpr::Expect(fail, stmt_at.start()));
+                }
+                Stmt::Backpassing(..) | Stmt::TypeDef(_) | Stmt::ValueDef(_) => {
+                    return Err(EExpr::IndentEnd(stmt_at.end()))
+                }
+            };
 
-        Ok(Loc::at(stmt_at, expr))
+            Ok(Loc::at(*stmt_at, expr))
+        }
     }
 }
 
@@ -3192,7 +3196,7 @@ fn stmts_to_defs<'a>(
                 }
             }
             Stmt::Backpassing(pats, call) => {
-                if i + 1 >= stmts.len() {
+                if i >= stmts.len() - 1 {
                     return Err(EExpr::BackpassContinue(region.end()));
                 }
 

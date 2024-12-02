@@ -5993,25 +5993,15 @@ mod test_fmt {
             "
         ));
 
-        expr_formats_to(
-            indoc!(
-                r"
+        expr_formats_same(indoc!(
+            r"
                 A :=
                     U8
                     implements [Eq, Hash]
 
                 0
                 "
-            ),
-            indoc!(
-                r"
-                A := U8
-                    implements [Eq, Hash]
-
-                0
-                "
-            ),
-        );
+        ));
 
         expr_formats_to(
             indoc!(
@@ -6067,7 +6057,8 @@ mod test_fmt {
             ),
             indoc!(
                 r"
-            Model position : {
+            Model position :
+            {
                 evaluated : Set position,
                 openSet : Set position,
                 costs : Dict.Dict position F64,

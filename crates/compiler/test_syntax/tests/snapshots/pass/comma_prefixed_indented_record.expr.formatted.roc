@@ -1,4 +1,5 @@
-Model position : {
+Model position :
+{
     evaluated : Set position,
     openSet : Set position,
     costs : Dict.Dict position F64,

@@ -184,17 +184,12 @@ fn parse_negative_number<'a>(
     min_indent: u32,
 ) -> ParseResult<'a, Loc<Expr<'a>>, EExpr<'a>> {
     // unary minus should not be followed by whitespace or comment
-    if !state
-        .bytes()
-        .get(1)
-        .map(|b| b.is_ascii_whitespace() || *b == b'#')
-        .unwrap_or(false)
-    {
+    if state.column() >= min_indent && !is_next_space_or_comment(state.bytes()) {
         let prev = state.clone();
         let state = state.inc();
         let loc_op = Region::new(start, state.pos());
 
-        match parse_term(PARSE_DEFAULT, flags, arena, state, min_indent) {
+        match parse_term(PARSE_NEGATIVE, flags, arena, state, min_indent) {
             Ok((expr, state)) => Ok((numeric_negate_expr(arena, &prev, loc_op, expr, &[]), state)),
             Err((_, fail)) => Err((MadeProgress, fail)),
         }
@@ -382,7 +377,7 @@ pub(crate) fn parse_expr_start<'a>(
     let inc_indent = start_state.line_indent() + 1;
 
     // Parse a chain of expressions separated by operators. Also handles function application.
-    let mut prev_state = state.clone();
+    let mut prev = state.clone();
     let (_, spaces_before_op, state) =
         match eat_nc_check(EExpr::IndentEnd, arena, state.clone(), min_indent, false) {
             Ok(ok) => ok,
@@ -394,7 +389,7 @@ pub(crate) fn parse_expr_start<'a>(
         arguments: Vec::new_in(arena),
         expr: term,
         spaces_after: spaces_before_op,
-        end: prev_state.pos(),
+        end: prev.pos(),
     };
 
     let mut state = state;
@@ -408,7 +403,7 @@ pub(crate) fn parse_expr_start<'a>(
         match term_res {
             Ok((mut arg, new_state)) => {
                 state = new_state;
-                prev_state = state.clone();
+                prev = state.clone();
 
                 if !expr_state.spaces_after.is_empty() {
                     arg = arg.spaced_before(arena, expr_state.spaces_after);
@@ -438,9 +433,15 @@ pub(crate) fn parse_expr_start<'a>(
                 // We just tried parsing an argument and determined we couldn't -
                 // so we're going to try parsing an operator.
                 let op_res = match parse_bin_op(state.clone()) {
-                    // roll back space parsing
-                    Err((NoProgress, _)) => Ok((finalize_expr(expr_state, arena), prev_state)),
-                    Err(err) => Err(err),
+                    Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
+                    Err(_) => Ok((finalize_expr(expr_state, arena), prev)),
+                    Ok((BinOp::Minus, state))
+                        if state.column() < inc_indent
+                            && !is_next_space_or_comment(state.bytes()) =>
+                    {
+                        // A unary minus must only match if we are at the correct indent level; indent level doesn't matter for the rest of the operators.
+                        Ok((finalize_expr(expr_state, arena), prev))
+                    }
                     Ok((op, state)) => {
                         let op_start = before_op.pos();
                         let op_end = state.pos();
@@ -1153,10 +1154,11 @@ fn parse_stmt_alias_or_opaque<'a>(
 
         match kind.value {
             AliasOrOpaque::Alias => {
-                // TODO @check later that here we skip `spaces_after_operator`
                 let ann_pos = state.pos();
                 let (ann, state) = parse_type_expr(NO_TYPE_EXPR_FLAGS, arena, state, inc_indent)
                     .map_err(|(p, fail)| (p, EExpr::Type(fail, ann_pos)))?;
+
+                let ann = ann.spaced_before(arena, spaces_after_operator);
 
                 let header = TypeHeader {
                     name: Loc::at(expr.region, name),
@@ -1168,15 +1170,14 @@ fn parse_stmt_alias_or_opaque<'a>(
             }
 
             AliasOrOpaque::Opaque => {
-                // TODO @check later that here we skip `spaces_after_operator`
-                let ann_pos = state.pos();
-                let (ann, state) = parse_type_expr(
+                let typ_pos = state.pos();
+                let (typ, state) = parse_type_expr(
                     TRAILING_COMMA_VALID | STOP_AT_FIRST_IMPL,
                     arena,
                     state,
                     inc_indent,
                 )
-                .map_err(|(p, fail)| (p, EExpr::Type(fail, ann_pos)))?;
+                .map_err(|(p, fail)| (p, EExpr::Type(fail, typ_pos)))?;
 
                 let prev = state.clone();
                 let (derived, state) =
@@ -1192,6 +1193,8 @@ fn parse_stmt_alias_or_opaque<'a>(
                         }
                     };
 
+                let typ = typ.spaced_before(arena, spaces_after_operator);
+
                 let header = TypeHeader {
                     name: Loc::at(expr.region, name),
                     vars: type_arguments.into_bump_slice(),
@@ -1199,7 +1202,7 @@ fn parse_stmt_alias_or_opaque<'a>(
 
                 let def = TypeDef::Opaque {
                     header,
-                    typ: ann,
+                    typ,
                     derived,
                 };
                 (Stmt::TypeDef(def), state)
@@ -1719,7 +1722,7 @@ fn parse_expr_end<'a>(
     inc_indent: u32,
     flags: ExprParseFlags,
     mut expr_state: ExprState<'a>,
-    initial: State<'a>,
+    prev: State<'a>,
 ) -> ParseResult<'a, Expr<'a>, EExpr<'a>> {
     let term_res = if state.column() >= inc_indent {
         parse_term(PARSE_UNDERSCORE, flags, arena, state.clone(), inc_indent)
@@ -1766,7 +1769,14 @@ fn parse_expr_end<'a>(
             // so we're going to try parsing an operator.
             let before_op = state.clone();
             match parse_bin_op(state) {
-                Err((MadeProgress, f)) => Err((MadeProgress, f)),
+                Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
+                Err(_) => Ok((finalize_expr(expr_state, arena), prev)),
+                Ok((BinOp::Minus, state))
+                    if state.column() < inc_indent && !is_next_space_or_comment(state.bytes()) =>
+                {
+                    // A unary minus must only match if we are at the correct indent level; indent level doesn't matter for the rest of the operators.
+                    Ok((finalize_expr(expr_state, arena), prev))
+                }
                 Ok((op, state)) => {
                     let op_start = before_op.pos();
                     let op_end = state.pos();
@@ -1811,8 +1821,6 @@ fn parse_expr_end<'a>(
                         }
                     }
                 }
-                // roll back space parsing
-                Err((NoProgress, _)) => Ok((finalize_expr(expr_state, arena), initial)),
             }
         }
     }
@@ -3758,7 +3766,7 @@ fn rest_of_logical_not<'a>(
     let (_, spaces_before, state) =
         eat_nc_check(EExpr::IndentStart, arena, state, min_indent, true)?;
 
-    match parse_term(PARSE_DEFAULT, flags, arena, state, min_indent) {
+    match parse_term(PARSE_NEGATIVE, flags, arena, state, min_indent) {
         Ok((val, state)) => {
             let val = val.spaced_before(arena, spaces_before);
             let op = Loc::pos(start, after_op, UnaryOp::Not);
@@ -3786,7 +3794,8 @@ fn is_binop_char(ch: &u8) -> bool {
     *ch < 127 && (BINOP_CHAR_MASK & (1 << *ch) != 0)
 }
 
-const SPECIAL_CHAR_SET: &[u8] = b" #\n\r\t,()[]{}\"'/\\+*%^&|<>=!~`;:?.";
+// The '-' is not included and handled separately because of the complications of parsing it as either unary or binary operator
+const SPECIAL_CHAR_SET: &[u8] = b" #\n\r\t,()[]{}\"'/\\+*%^&|<>=!~`;:?.@";
 
 const SPECIAL_CHAR_MASK: u128 = {
     let mut result = 0u128;
@@ -3851,11 +3860,24 @@ fn parse_bin_op(state: State<'_>) -> ParseResult<BinOp, EExpr<'_>> {
         // a `.` makes no progress, so it does not interfere with `.foo` access(or)
         "." => Err((NoProgress, EExpr::BadOperator(".", state.pos()))),
         "!" => Err((NoProgress, EExpr::BadOperator("!", state.pos()))),
+
+        // makes no progress, so it does not interfere with record updaters / `&foo`
+        "&" => Err((NoProgress, EExpr::BadOperator("&", state.pos()))),
+
         // makes no progress, so it does not interfere with `_ if isGood -> ...`
         "->" => Err((NoProgress, EExpr::BadOperator("->", state.pos()))),
 
         _ => Err((MadeProgress, EExpr::BadOperator(op, state.pos()))),
     }
+}
+
+/// Unary minus is distinguished by not having a space after it
+#[inline(always)]
+fn is_next_space_or_comment(bytes: &[u8]) -> bool {
+    matches!(
+        bytes.get(1),
+        None | Some(b' ' | b'#' | b'\n' | b'\r' | b'\t'),
+    )
 }
 
 fn parse_op(state: State<'_>) -> ParseResult<OperatorOrDef, EExpr<'_>> {

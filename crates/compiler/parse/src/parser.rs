@@ -2,6 +2,7 @@ use crate::{
     ast::Collection,
     blankspace::{eat_nc, SpacedBuilder},
     expr::is_special_char,
+    keyword::EXPECT,
     state::State,
 };
 use bumpalo::collections::vec::Vec;
@@ -709,13 +710,14 @@ pub struct FileError<'a, T> {
 /// to prevent treating `whence` or `iffy` as keywords
 pub fn eat_keyword<'a>(kw: &'static str, state: &State<'a>) -> usize {
     let bytes = state.bytes();
-    let n = kw.len();
-    let found = match bytes.get(n) {
+    let kw_len = kw.len();
+    let found = match bytes.get(kw_len) {
+        Some(b'-') if kw != EXPECT => bytes.starts_with(kw.as_bytes()),
         Some(b) => is_special_char(b) && bytes.starts_with(kw.as_bytes()),
         None => bytes.starts_with(kw.as_bytes()),
     };
     if found {
-        n
+        kw_len
     } else {
         0
     }

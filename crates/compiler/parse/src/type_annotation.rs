@@ -683,10 +683,10 @@ pub(crate) fn parse_type_expr<'a>(
             };
         }
 
-        let news = state.inc();
-        let space_pos = news.pos();
-        let (_, spaces_before, news) =
-            match eat_nc_check(EType::TIndentStart, arena, news, min_indent, false) {
+        let next = state.inc();
+        let space_pos = next.pos();
+        let (_, spaces_before, next) =
+            match eat_nc_check(EType::TIndentStart, arena, next, min_indent, false) {
                 Ok(ok) => ok,
                 Err((NoProgress, _)) => {
                     break Err((MadeProgress, EType::TFunctionArgument(space_pos)))
@@ -694,22 +694,27 @@ pub(crate) fn parse_type_expr<'a>(
                 Err(err) => break Err(err),
             };
 
-        let arg_pos = news.pos();
-        let (arg, news) = match parse_term(flags, arena, news, min_indent) {
+        // double comma is not allowed
+        if next.bytes().first() == Some(&b',') {
+            break Err((MadeProgress, EType::TFunctionArgument(next.pos())));
+        }
+
+        let arg_pos = next.pos();
+        let (arg, next) = match parse_term(flags, arena, next, min_indent) {
             Ok(ok) => ok,
             Err((NoProgress, _)) => break Err((MadeProgress, EType::TFunctionArgument(arg_pos))),
             Err(err) => break Err(err),
         };
 
-        let (_, spaces_after, news) =
-            match eat_nc_check(EType::TIndentEnd, arena, news, min_indent, true) {
+        let (_, spaces_after, next) =
+            match eat_nc_check(EType::TIndentEnd, arena, next, min_indent, true) {
                 Ok(ok) => ok,
                 Err(err) => break Err(err),
             };
 
         let arg = arg.spaced_around(arena, spaces_before, spaces_after);
         more_args.push(arg);
-        state = news;
+        state = next;
     };
 
     let (types, state) = match more_args_res {
@@ -771,7 +776,7 @@ pub(crate) fn parse_type_expr<'a>(
     // The where clause must be at least as deep as where the type annotation started.
     let types_state = state.clone();
 
-    let (_, spaces_before, mut state) =
+    let (_, spaces_before, state) =
         match eat_nc_check(EType::TIndentStart, arena, state, min_indent, true) {
             Ok(ok) => ok,
             Err(_) => return Ok((types, types_state)),
@@ -780,7 +785,7 @@ pub(crate) fn parse_type_expr<'a>(
     if !state.bytes().starts_with(crate::keyword::WHERE.as_bytes()) {
         return Ok((types, types_state));
     }
-    state.leap_mut(keyword::WHERE.len());
+    let state = state.leap_len(keyword::WHERE);
 
     // Parse the first clause (there must be one), then the rest
     let (first_impl, mut state) = match parse_implements_clause(arena, state, min_indent) {

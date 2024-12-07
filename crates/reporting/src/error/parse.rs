@@ -1451,8 +1451,6 @@ fn to_dbg_or_expect_report<'a>(
             to_space_report(alloc, lines, filename, err, *pos)
         }
 
-        roc_parse::parser::EExpect::DbgArity(_) => todo!(),
-
         roc_parse::parser::EExpect::Condition(e_expr, condition_start) => {
             // is adding context helpful here?
             to_expr_report(alloc, lines, filename, context, e_expr, *condition_start)

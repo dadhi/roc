@@ -432,16 +432,9 @@ pub(crate) fn parse_expr_start<'a>(
                 // We're part way thru parsing an expression, e.g. `bar foo `.
                 // We just tried parsing an argument and determined we couldn't -
                 // so we're going to try parsing an operator.
-                let op_res = match parse_bin_op(state.clone()) {
+                let op_res = match parse_bin_op(state.clone(), inc_indent) {
                     Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
                     Err(_) => Ok((finalize_expr(expr_state, arena), prev)),
-                    Ok((BinOp::Minus, state))
-                        if state.column() < inc_indent
-                            && !is_next_space_or_comment(state.bytes()) =>
-                    {
-                        // A unary minus must only match if we are at the correct indent level; indent level doesn't matter for the rest of the operators.
-                        Ok((finalize_expr(expr_state, arena), prev))
-                    }
                     Ok((op, state)) => {
                         let op_start = before_op.pos();
                         let op_end = state.pos();
@@ -641,8 +634,8 @@ fn parse_stmt_operator_chain<'a>(
                 // we handle the additional case of backpassing, which is valid
                 // at the statement level but not at the expression level.
                 let before_op = state.clone();
-                let op_res = match parse_op(state.clone()) {
-                    Err((MadeProgress, f)) => Err((MadeProgress, f)),
+                let op_res = match parse_op(state.clone(), inc_indent) {
+                    Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
                     Ok((op, state)) => {
                         // adds the spaces before operator to the preceding expression term
                         expr_state.consume_spaces(arena);
@@ -865,22 +858,22 @@ fn numeric_negate_expr<'a>(
     let region = Region::new(start, expr.region.end());
 
     let new_expr = match expr.value {
-        Expr::Num(string) => {
+        Expr::Num(string) if !string.starts_with('-') => {
             let s = unsafe { std::str::from_utf8_unchecked(&state.bytes()[..string.len() + 1]) };
             Expr::Num(s)
         }
-        Expr::Float(string) => {
+        Expr::Float(string) if !string.starts_with('-') => {
             let s = unsafe { std::str::from_utf8_unchecked(&state.bytes()[..string.len() + 1]) };
             Expr::Float(s)
         }
         Expr::NonBase10Int {
             string,
             base,
-            is_negative,
+            is_negative: false,
         } => {
             // don't include the minus sign here; it will not be parsed right
             Expr::NonBase10Int {
-                is_negative: !is_negative,
+                is_negative: true,
                 string,
                 base,
             }
@@ -1171,13 +1164,9 @@ fn parse_stmt_alias_or_opaque<'a>(
 
             AliasOrOpaque::Opaque => {
                 let typ_pos = state.pos();
-                let (typ, state) = parse_type_expr(
-                    TRAILING_COMMA_VALID | STOP_AT_FIRST_IMPL,
-                    arena,
-                    state,
-                    inc_indent,
-                )
-                .map_err(|(p, fail)| (p, EExpr::Type(fail, typ_pos)))?;
+                let flags = TRAILING_COMMA_VALID | STOP_AT_FIRST_IMPL;
+                let (typ, state) = parse_type_expr(flags, arena, state, inc_indent)
+                    .map_err(|(p, fail)| (p, EExpr::Type(fail, typ_pos)))?;
 
                 let prev = state.clone();
                 let (derived, state) =
@@ -1768,15 +1757,9 @@ fn parse_expr_end<'a>(
             // We just tried parsing an argument and determined we couldn't -
             // so we're going to try parsing an operator.
             let before_op = state.clone();
-            match parse_bin_op(state) {
+            match parse_bin_op(state, inc_indent) {
                 Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
                 Err(_) => Ok((finalize_expr(expr_state, arena), prev)),
-                Ok((BinOp::Minus, state))
-                    if state.column() < inc_indent && !is_next_space_or_comment(state.bytes()) =>
-                {
-                    // A unary minus must only match if we are at the correct indent level; indent level doesn't matter for the rest of the operators.
-                    Ok((finalize_expr(expr_state, arena), prev))
-                }
                 Ok((op, state)) => {
                     let op_start = before_op.pos();
                     let op_end = state.pos();
@@ -1994,7 +1977,7 @@ fn expr_to_pattern<'a>(arena: &'a Bump, expr: &Expr<'a>) -> Result<Pattern<'a>, 
         | Expr::If { .. }
         | Expr::When(..)
         | Expr::Dbg
-        | Expr::DbgStmt(_, _)
+        | Expr::DbgStmt { .. }
         | Expr::LowLevelDbg(_, _, _)
         | Expr::Return(_, _)
         | Expr::MalformedSuffixed(..)
@@ -2247,7 +2230,7 @@ fn rest_of_closure<'a>(
 
     let (binop_shortcut, binop, state) = if is_negate_op {
         (true, BinOp::Minus, state)
-    } else if let Ok((binop, state)) = parse_bin_op(state.clone()) {
+    } else if let Ok((binop, state)) = parse_bin_op(state.clone(), slash_indent + 1) {
         (true, binop, state)
     } else {
         // here Minus does not matter
@@ -3179,16 +3162,13 @@ fn stmts_to_defs<'a>(
                         _called_via,
                     ) = expr
                     {
-                        if args.len() != 1 {
-                            // TODO: this should be done in can, not parsing!
-                            return Err(EExpr::Dbg(
-                                EExpect::DbgArity(region.start()),
-                                region.start(),
-                            ));
-                        }
                         let condition = &args[0];
                         let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
-                        let expr = Expr::DbgStmt(condition, arena.alloc(rest));
+                        let expr = Expr::DbgStmt {
+                            first: condition,
+                            extra_args: &args[1..],
+                            continuation: arena.alloc(rest),
+                        };
                         let expr = expr.spaced_before(arena, before);
                         last_expr = Some(Loc::at(region, expr));
 
@@ -3279,7 +3259,11 @@ fn stmts_to_defs<'a>(
                     if exprify_dbg {
                         let expr = if i + 1 < stmts.len() {
                             let rest = stmts_to_expr(&stmts[i + 1..], arena)?;
-                            Expr::DbgStmt(arena.alloc(condition), arena.alloc(rest))
+                            Expr::DbgStmt {
+                                first: arena.alloc(condition),
+                                extra_args: &[],
+                                continuation: arena.alloc(rest),
+                            }
                         } else {
                             Expr::Apply(
                                 arena.alloc(Loc::at(region, Expr::Dbg)),
@@ -3446,9 +3430,6 @@ pub enum RecordField<'a> {
     SpaceBefore(&'a RecordField<'a>, &'a [CommentOrNewline<'a>]),
     SpaceAfter(&'a RecordField<'a>, &'a [CommentOrNewline<'a>]),
 }
-
-#[derive(Debug)]
-pub struct FoundApplyValue;
 
 impl<'a> RecordField<'a> {
     fn is_ignored_value(&self) -> bool {
@@ -3821,7 +3802,7 @@ enum OperatorOrDef {
     Backpassing,
 }
 
-fn parse_bin_op(state: State<'_>) -> ParseResult<BinOp, EExpr<'_>> {
+fn parse_bin_op(state: State<'_>, min_indent: u32) -> ParseResult<BinOp, EExpr<'_>> {
     let bytes: &[u8] = state.bytes();
 
     let mut chomped = 0;
@@ -3840,7 +3821,15 @@ fn parse_bin_op(state: State<'_>) -> ParseResult<BinOp, EExpr<'_>> {
     let op = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
     match op {
         "+" => Ok((BinOp::Plus, state.inc())),
-        "-" => Ok((BinOp::Minus, state.inc())),
+        "-" => {
+            if state.column() < min_indent && !is_next_space_or_comment(state.bytes()) {
+                // A unary minus must only match if we are at the correct indent level,
+                // indent level doesn't matter for the rest of the operators.
+                return Err((NoProgress, EExpr::BadOperator("-", state.pos())));
+            }
+
+            Ok((BinOp::Minus, state.inc()))
+        }
         "*" => Ok((BinOp::Star, state.inc())),
         "/" => Ok((BinOp::Slash, state.inc())),
         "%" => Ok((BinOp::Percent, state.inc())),
@@ -3880,8 +3869,8 @@ fn is_next_space_or_comment(bytes: &[u8]) -> bool {
     )
 }
 
-fn parse_op(state: State<'_>) -> ParseResult<OperatorOrDef, EExpr<'_>> {
-    match parse_bin_op(state.clone()) {
+fn parse_op(state: State<'_>, min_indent: u32) -> ParseResult<OperatorOrDef, EExpr<'_>> {
+    match parse_bin_op(state.clone(), min_indent) {
         Ok((op, state)) => Ok((OperatorOrDef::BinOp(op), state)),
         Err((MadeProgress, EExpr::BadOperator(op, pos))) => match op {
             "=" => Ok((OperatorOrDef::Assignment, state.inc())),

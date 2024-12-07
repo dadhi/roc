@@ -205,13 +205,15 @@ fn rest_of_type_in_parens<'a>(
 ) -> ParseResult<'a, Loc<TypeAnnotation<'a>>, ETypeInParens<'a>> {
     let elem_p = move |a: &'a Bump, state: State<'a>| {
         let type_pos = state.pos();
-        parse_type_expr(
+        match parse_type_expr(
             TRAILING_COMMA_VALID | SKIP_PARSING_SPACES_BEFORE,
             a,
             state,
             0,
-        )
-        .map_err(|(p, fail)| (p, ETypeInParens::Type(a.alloc(fail), type_pos)))
+        ) {
+            Ok(ok) => Ok(ok),
+            Err((p, fail)) => Err((p, ETypeInParens::Type(a.alloc(fail), type_pos))),
+        }
     };
     let (fields, state) = collection_inner(arena, state, elem_p, TypeAnnotation::SpaceBefore)?;
 
@@ -646,12 +648,12 @@ pub(crate) fn parse_type_expr<'a>(
     let (first_type, state) = if flags.is_set(SKIP_PARSING_SPACES_BEFORE) {
         parse_term(flags, arena, state, min_indent)?
     } else {
-        let (sp_p, spaces_before, state) =
+        let (sp_first_pr, spaces_before, state) =
             eat_nc_check(EType::TIndentStart, arena, state, min_indent, false)?;
 
         let (first_type, state) = match parse_term(flags, arena, state, min_indent) {
             Ok(ok) => ok,
-            Err((p, fail)) => return Err((p.or(sp_p), fail)),
+            Err((err_pr, fail)) => return Err((err_pr.or(sp_first_pr), fail)),
         };
 
         (first_type.spaced_before(arena, spaces_before), state)
@@ -660,10 +662,11 @@ pub(crate) fn parse_type_expr<'a>(
     let first_state = state.clone();
     let mut state = state;
     let mut more_args = Vec::with_capacity_in(1, arena);
+
     let more_args_res = loop {
         if state.bytes().first() != Some(&b',') {
             // if no more type args then add the space after the first type annotation here
-            let (p, sp_after_single_ann, state) = if more_args.is_empty() {
+            let (end_space_pr, sp_after_single_ann, state) = if more_args.is_empty() {
                 match eat_nc_check(EType::TIndentStart, arena, state, min_indent, false) {
                     Ok((_, sp, state)) => (NoProgress, sp, state),
                     Err(err) => break Err(err),
@@ -679,40 +682,42 @@ pub(crate) fn parse_type_expr<'a>(
                 let out = (more_args, sp_after_single_ann, FunctionArrow::Effectful);
                 Ok((out, state.leap(2)))
             } else {
-                Err((p, EType::TStart(state.pos())))
+                Err((end_space_pr, EType::TStart(state.pos())))
             };
         }
 
         let next = state.inc();
         let space_pos = next.pos();
-        let (_, spaces_before, next) =
+        let (_, spaces_after_comma, next) =
             match eat_nc_check(EType::TIndentStart, arena, next, min_indent, false) {
                 Ok(ok) => ok,
-                Err((NoProgress, _)) => {
-                    break Err((MadeProgress, EType::TFunctionArgument(space_pos)))
-                }
-                Err(err) => break Err(err),
+                // backtrackable comma and space after it
+                Err(_) => break Err((NoProgress, EType::TFunctionArgument(space_pos))),
             };
 
-        // double comma is not allowed
-        if next.bytes().first() == Some(&b',') {
-            break Err((MadeProgress, EType::TFunctionArgument(next.pos())));
-        }
-
         let arg_pos = next.pos();
-        let (arg, next) = match parse_term(flags, arena, next, min_indent) {
+        let (arg, next) = match parse_term(flags, arena, next.clone(), min_indent) {
             Ok(ok) => ok,
-            Err((NoProgress, _)) => break Err((MadeProgress, EType::TFunctionArgument(arg_pos))),
-            Err(err) => break Err(err),
+            Err((NoProgress, _)) => {
+                let err_pr = if next.bytes().first() == Some(&b',') {
+                    MadeProgress
+                } else {
+                    NoProgress
+                };
+                break Err((err_pr, EType::TFunctionArgument(arg_pos)));
+            }
+            // in the case like this `.:(i,(i`, if the arg parsing is failed/incomplete, we should propagate error up the stack
+            // see also snapshot test `nested_tuples_annotation_terrible_perf``
+            Err(err) => return Err(err),
         };
 
-        let (_, spaces_after, next) =
+        let (_, spaces_after_arg, next) =
             match eat_nc_check(EType::TIndentEnd, arena, next, min_indent, true) {
                 Ok(ok) => ok,
                 Err(err) => break Err(err),
             };
 
-        let arg = arg.spaced_around(arena, spaces_before, spaces_after);
+        let arg = arg.spaced_around(arena, spaces_after_comma, spaces_after_arg);
         more_args.push(arg);
         state = next;
     };
@@ -734,6 +739,7 @@ pub(crate) fn parse_type_expr<'a>(
             let mut arguments = Vec::with_capacity_in(more_args.len() + 1, arena);
             arguments.push(first_type);
             arguments.extend(more_args);
+
             // add space to the single type argument only if it is part of the function signature, and not a standalone type
             if !sp_after_single_ann.is_empty() {
                 debug_assert!(arguments.len() == 1);

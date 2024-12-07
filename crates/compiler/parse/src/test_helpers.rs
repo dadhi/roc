@@ -14,7 +14,7 @@ pub fn parse_expr_with<'a>(
     arena: &'a Bump,
     input: &'a str,
 ) -> Result<ast::Expr<'a>, SyntaxError<'a>> {
-    // each parsing (in a thread) should produce the same parameter names, se may compare parsed and re-parsed output
+    // each parsing (in a thread) should produce the same parameter names, to enable comparison of parsed and re-parsed output
     reset_unique_closure_shortcut_arg_generator();
 
     let state = State::new(input.as_bytes());

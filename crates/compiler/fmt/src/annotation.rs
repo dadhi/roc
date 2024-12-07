@@ -5,12 +5,15 @@ use crate::{
     Buf,
 };
 use bumpalo::{collections::Vec, Bump};
-use roc_parse::ast::{
-    AbilityImpls, AssignedField, Collection, CommentOrNewline, Expr, ExtractSpaces, FunctionArrow,
-    ImplementsAbilities, ImplementsAbility, ImplementsClause, Spaceable, Spaces, SpacesAfter,
-    SpacesBefore, Tag, TypeAnnotation, TypeHeader,
-};
 use roc_parse::ident::UppercaseIdent;
+use roc_parse::{
+    ast::{
+        AbilityImpls, AssignedField, Collection, CommentOrNewline, Expr, ExtractSpaces,
+        FunctionArrow, ImplementsAbilities, ImplementsAbility, ImplementsClause, Spaces,
+        SpacesAfter, SpacesBefore, Tag, TypeAnnotation, TypeHeader,
+    },
+    blankspace::SpacedBuilder,
+};
 use roc_region::all::Loc;
 
 /// Does an AST node need parens around it?
@@ -893,7 +896,7 @@ pub fn ann_lift_spaces_before<'a, 'b: 'a>(
     let lifted = ann_lift_spaces(arena, ann);
     SpacesBefore {
         before: lifted.before,
-        item: lifted.item.maybe_after(arena, lifted.after),
+        item: lifted.item.spaced_after(arena, lifted.after),
     }
 }
 
@@ -903,7 +906,7 @@ pub fn ann_lift_spaces_after<'a, 'b: 'a>(
 ) -> SpacesAfter<'a, TypeAnnotation<'a>> {
     let lifted = ann_lift_spaces(arena, ann);
     SpacesAfter {
-        item: lifted.item.maybe_before(arena, lifted.before),
+        item: lifted.item.spaced_before(arena, lifted.before),
         after: lifted.after,
     }
 }

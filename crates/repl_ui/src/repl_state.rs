@@ -320,7 +320,7 @@ pub fn parse_src<'a>(arena: &'a Bump, line: &'a str) -> ParseOutcome<'a> {
 
             match parse_repl_defs_and_optional_expr(arena, State::new(src_bytes)) {
                 Err((_, e)) => parse_outcome_for_error(e),
-                Ok((_, (defs, opt_last_expr), _state)) => {
+                Ok((defs, opt_last_expr)) => {
                     if defs.is_empty() && opt_last_expr.is_none() {
                         ParseOutcome::Empty
                     } else {

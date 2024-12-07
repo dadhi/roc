@@ -18,6 +18,10 @@ impl Region {
         Self { start, end }
     }
 
+    pub const fn point(start: Position) -> Self {
+        Self { start, end: start }
+    }
+
     pub fn contains(&self, other: &Self) -> bool {
         self.start <= other.start && self.end >= other.end
     }
@@ -118,6 +122,13 @@ impl Position {
     }
 
     #[must_use]
+    pub const fn bump_offset(self, count: usize) -> Self {
+        Self {
+            offset: self.offset + count as u32,
+        }
+    }
+
+    #[must_use]
     pub fn bump_invisible(self, count: u32) -> Self {
         Self {
             offset: self.offset + count,
@@ -132,9 +143,16 @@ impl Position {
     }
 
     #[must_use]
-    pub const fn sub(self, count: u32) -> Self {
+    pub const fn next(self) -> Self {
         Self {
-            offset: self.offset - count,
+            offset: self.offset + 1,
+        }
+    }
+
+    #[must_use]
+    pub const fn prev(self) -> Self {
+        Self {
+            offset: self.offset - 1,
         }
     }
 
@@ -298,6 +316,11 @@ pub struct Loc<T> {
 impl<T> Loc<T> {
     pub const fn new(start: u32, end: u32, value: T) -> Loc<T> {
         let region = Region::new(Position::new(start), Position::new(end));
+        Loc { region, value }
+    }
+
+    pub const fn pos(start: Position, end: Position, value: T) -> Loc<T> {
+        let region = Region::new(start, end);
         Loc { region, value }
     }
 

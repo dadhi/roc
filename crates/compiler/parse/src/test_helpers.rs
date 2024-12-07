@@ -2,33 +2,36 @@ use crate::ast;
 use crate::ast::Defs;
 use crate::ast::Header;
 use crate::ast::SpacesBefore;
+use crate::expr::reset_unique_closure_shortcut_arg_generator;
 use crate::header::parse_module_defs;
 use crate::parser::SourceError;
 use crate::parser::SyntaxError;
 use crate::state::State;
 use bumpalo::Bump;
 use roc_region::all::Loc;
-use roc_region::all::Position;
 
 pub fn parse_expr_with<'a>(
     arena: &'a Bump,
     input: &'a str,
 ) -> Result<ast::Expr<'a>, SyntaxError<'a>> {
-    parse_loc_with(arena, input)
-        .map(|loc_expr| loc_expr.value)
-        .map_err(|e| e.problem)
+    // each parsing (in a thread) should produce the same parameter names, to enable comparison of parsed and re-parsed output
+    reset_unique_closure_shortcut_arg_generator();
+
+    let state = State::new(input.as_bytes());
+    match crate::expr::test_parse_expr(arena, state) {
+        Ok(loc_expr) => Ok(loc_expr.value),
+        Err(fail) => Err(fail),
+    }
 }
 
-#[allow(dead_code)]
 pub fn parse_loc_with<'a>(
     arena: &'a Bump,
     input: &'a str,
 ) -> Result<Loc<ast::Expr<'a>>, SourceError<'a, SyntaxError<'a>>> {
     let state = State::new(input.as_bytes());
-
-    match crate::expr::test_parse_expr(0, arena, state.clone()) {
+    match crate::expr::test_parse_expr(arena, state.clone()) {
         Ok(loc_expr) => Ok(loc_expr),
-        Err(fail) => Err(SyntaxError::Expr(fail, Position::default()).into_source_error(&state)),
+        Err(fail) => Err(fail.into_source_error(&state)),
     }
 }
 

@@ -11,7 +11,7 @@ use roc_load::{ExecutionMode, LoadConfig, LoadedModule, LoadingProblem, Threadin
 use roc_module::symbol::{Interns, ModuleId, Symbol};
 use roc_packaging::cache::{self, RocCacheDir};
 use roc_parse::ast::FunctionArrow;
-use roc_parse::ident::{parse_ident, Accessor, Ident};
+use roc_parse::ident::{parse_ident_chain, Accessor, Ident};
 use roc_parse::keyword;
 use roc_parse::state::State;
 use roc_problem::Severity;
@@ -1197,8 +1197,11 @@ fn markdown_to_html(
 ) {
     use pulldown_cmark::{BrokenLink, CodeBlockKind, CowStr, Event, LinkType, Tag::*};
 
-    let mut arena = Bump::new();
+    let module_id = loaded_module.module_id;
+    let interns = &loaded_module.interns;
+
     let mut broken_link_callback = |link: BrokenLink| {
+        let mut arena = Bump::new();
         // A shortcut link - see https://spec.commonmark.org/0.30/#shortcut-reference-link -
         // is something like `[foo]` in markdown. If you have a shortcut link
         // without a corresponding `[foo]: https://foo.com` entry
@@ -1213,80 +1216,47 @@ fn markdown_to_html(
                 // more memory as we iterate through these.
                 arena.reset();
 
-                match parse_ident(&arena, state, 0) {
-                    Ok((
-                        _,
-                        Ident::Access {
-                            module_name, parts, ..
-                        },
-                        _,
-                    )) => {
-                        let mut iter = parts.iter();
-
-                        match iter.next() {
-                            Some(Accessor::RecordField(symbol_name)) if iter.next().is_none() => {
-                                match doc_url(
-                                    all_exposed_symbols,
-                                    scope,
-                                    &loaded_module.interns,
-                                    module_name,
-                                    symbol_name,
-                                ) {
-                                    Ok(DocUrl { url, title }) => Some((url.into(), title.into())),
-                                    Err((link_markdown, problem)) => {
-                                        report_markdown_link_problem(
-                                            loaded_module.module_id,
-                                            filename.to_path_buf(),
-                                            &link_markdown,
-                                            problem,
-                                        );
-
-                                        None
-                                    }
-                                }
-                            }
-                            _ => {
-                                report_markdown_link_problem(
-                                    loaded_module.module_id,
-                                    filename.to_path_buf(),
-                                    &format!("[{}]", link.reference),
-                                    LinkProblem::MalformedAutoLink,
-                                );
+                match parse_ident_chain(&arena, state) {
+                    Ok((Ident::Plain(ident), _)) => {
+                        match doc_url(all_exposed_symbols, scope, interns, "", ident) {
+                            Ok(DocUrl { url, title }) => Some((url.into(), title.into())),
+                            Err((link_md, problem)) => {
+                                report_md_link_problem(module_id, filename, &link_md, problem);
                                 None
                             }
                         }
                     }
-                    Ok((_, Ident::Tag(type_name), _)) => {
+                    Ok((
+                        Ident::Access {
+                            module_name,
+                            parts: [Accessor::RecordField(ident)],
+                        },
+                        _,
+                    )) => match doc_url(all_exposed_symbols, scope, interns, module_name, ident) {
+                        Ok(DocUrl { url, title }) => Some((url.into(), title.into())),
+                        Err((link_md, problem)) => {
+                            report_md_link_problem(module_id, filename, &link_md, problem);
+                            None
+                        }
+                    },
+                    Ok((Ident::Tag(type_name), _)) => {
                         // This looks like a tag name, but it could
                         // be a type alias that's in scope, e.g. [I64]
-                        match doc_url(
-                            all_exposed_symbols,
-                            scope,
-                            &loaded_module.interns,
-                            "",
-                            type_name,
-                        ) {
+                        match doc_url(all_exposed_symbols, scope, interns, "", type_name) {
                             Ok(DocUrl { url, title }) => Some((url.into(), title.into())),
-                            Err((link_markdown, problem)) => {
-                                report_markdown_link_problem(
-                                    loaded_module.module_id,
-                                    filename.to_path_buf(),
-                                    &link_markdown,
-                                    problem,
-                                );
-
+                            Err((link_md, problem)) => {
+                                report_md_link_problem(module_id, filename, &link_md, problem);
                                 None
                             }
                         }
                     }
                     _ => {
-                        report_markdown_link_problem(
-                            loaded_module.module_id,
-                            filename.to_path_buf(),
+                        report_md_link_problem(
+                            module_id,
+                            filename,
                             &format!("[{}]", link.reference),
                             LinkProblem::MalformedAutoLink,
                         );
-
                         None
                     }
                 }
@@ -1389,16 +1359,17 @@ fn markdown_to_html(
 /// for docs should be part of `roc check`. Problems like these should
 /// be reported as `roc check` warnings and included in the total count
 /// of warnings at the end.
-fn report_markdown_link_problem(
+fn report_md_link_problem(
     module_id: ModuleId,
-    filename: PathBuf,
-    link_markdown: &str,
+    filename: &Path,
+    link_md: &str,
     problem: LinkProblem,
 ) {
     use roc_reporting::report::{Report, RocDocAllocator, DEFAULT_PALETTE};
     use ven_pretty::DocAllocator;
 
     // Report parsing and canonicalization problems
+    let filename = filename.to_path_buf();
     let interns = Interns::default();
     let alloc = RocDocAllocator::new(&[], module_id, &interns);
 
@@ -1426,7 +1397,7 @@ fn report_markdown_link_problem(
 
         let doc = alloc.stack([
             alloc.reflow("This link in a doc comment is invalid:"),
-            alloc.reflow(link_markdown).indent(4),
+            alloc.reflow(link_md).indent(4),
             link_problem,
         ]);
 

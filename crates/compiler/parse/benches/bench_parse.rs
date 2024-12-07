@@ -10,8 +10,10 @@ use std::path::PathBuf;
 pub fn parse_benchmark(c: &mut Criterion) {
     c.bench_function("parse false-interpreter", |b| {
         let mut path = PathBuf::from(std::env!("ROC_WORKSPACE_DIR"));
-        path.push("examples");
+        path.push("crates");
         path.push("cli");
+        path.push("tests");
+        path.push("test-projects");
         path.push("false-interpreter");
         path.push("main.roc");
         let src = std::fs::read_to_string(&path).unwrap();

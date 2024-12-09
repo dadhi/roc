@@ -173,12 +173,12 @@ fn parse_term<'a>(
     }
     let state = state.leap(n);
 
-    let (sp, spaces_after_as, state) =
+    let (sp_pr, spaces_after_as, state) =
         eat_nc_check(EType::TAsIndentStart, arena, state, min_indent, false)?;
 
     let (mut alias_ann, state) = match parse_term(NO_TYPE_EXPR_FLAGS, arena, state, min_indent) {
         Ok(ok) => ok,
-        Err((ep, fail)) => return Err((ep.or(sp), fail)),
+        Err((err_pr, fail)) => return Err((err_pr.or(sp_pr), fail)),
     };
 
     alias_ann = alias_ann.spaced_before(arena, spaces_after_as);

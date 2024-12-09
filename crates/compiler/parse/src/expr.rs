@@ -184,7 +184,7 @@ fn parse_negative_number<'a>(
     min_indent: u32,
 ) -> ParseResult<'a, Loc<Expr<'a>>, EExpr<'a>> {
     // unary minus should not be followed by whitespace or comment
-    if state.column() >= min_indent && !is_next_space_or_comment(state.bytes()) {
+    if state.column() >= min_indent && !is_next_space_or_comment_or_arrow(state.bytes()) {
         let prev = state.clone();
         let state = state.inc();
         let loc_op = Region::new(start, state.pos());
@@ -276,7 +276,10 @@ fn parse_term<'a>(
                 }
             }
             b'!' => {
-                if opts.is_set(PARSE_NEGATIVE) {
+                if opts.is_set(PARSE_NEGATIVE)
+                    && state.column() >= min_indent
+                    && state.bytes().get(1) != Some(&b'=')
+                {
                     rest_of_logical_not(start, flags, arena, state.inc(), min_indent)
                 } else {
                     Err((NoProgress, EExpr::Start(start)))
@@ -378,6 +381,8 @@ pub(crate) fn parse_expr_start<'a>(
 
     // Parse a chain of expressions separated by operators. Also handles function application.
     let mut prev = state.clone();
+    let end = state.pos();
+
     let (_, spaces_before_op, state) =
         match eat_nc_check(EExpr::IndentEnd, arena, state.clone(), min_indent, false) {
             Ok(ok) => ok,
@@ -395,7 +400,11 @@ pub(crate) fn parse_expr_start<'a>(
     let mut state = state;
     loop {
         let term_res = if state.column() >= inc_indent {
-            parse_term(PARSE_UNDERSCORE, flags, arena, state.clone(), inc_indent)
+            let mut opts = PARSE_UNDERSCORE;
+            if state.pos() > end {
+                opts = opts | PARSE_NEGATIVE;
+            }
+            parse_term(opts, flags, arena, state.clone(), inc_indent)
         } else {
             Err((NoProgress, EExpr::Start(state.pos())))
         };
@@ -629,10 +638,6 @@ fn parse_stmt_operator_chain<'a>(
                 // We're part way thru parsing an expression, e.g. `bar foo `.
                 // We just tried parsing an argument and determined we couldn't -
                 // so we're going to try parsing an operator.
-                //
-                // This is very similar to the logic in `expr_operator_chain`, except
-                // we handle the additional case of backpassing, which is valid
-                // at the statement level but not at the expression level.
                 let before_op = state.clone();
                 let op_res = match parse_op(state.clone(), inc_indent) {
                     Err((MadeProgress, fail)) => Err((MadeProgress, fail)),
@@ -1701,7 +1706,6 @@ fn parse_negative_term<'a>(
 }
 
 /// Parse an expression, not allowing `if`/`when`/etc.
-/// TODO: this should probably be subsumed into `expr_operator_chain`
 #[allow(clippy::too_many_arguments)]
 fn parse_expr_end<'a>(
     start: Position,
@@ -2900,8 +2904,29 @@ fn rest_of_if_expr<'a>(
         break state;
     };
 
+    // todo: @wip
+    // require_newline_or_eof(EExpr::IndentEnd)
+    //----
+    // // TODO: we can do this more efficiently by stopping as soon as we see a '#' or a newline
+    // let (_, res, _) = space0_e(newline_problem).parse(arena, state.clone(), min_indent)?;
+    // if !res.is_empty() || state.has_reached_end() {
+    //     Ok((NoProgress, (), state))
+    // }
+
+    // let has_newline_next = require_newline_or_eof(EExpr::IndentEnd)
+    //     .parse(arena, state_final_else.clone(), min_indent)
+    //     .is_ok();
+
     let else_indent = at_final_else.line_indent();
-    let indented_else = else_indent > if_indent;
+    let indented_else = else_indent > if_indent && {
+        // require_newline_or_eof
+        match eat_nc::<EExpr<'_>>(arena, at_final_else.clone(), false) {
+            Ok((_, (sp, _), state)) => {
+                (!sp.is_empty() && state.column() >= min_indent) || state.has_reached_end()
+            }
+            _ => false,
+        }
+    };
 
     let min_indent = if !indented_else {
         else_indent + 1
@@ -3202,17 +3227,14 @@ fn stmts_to_defs<'a>(
 
             Stmt::TypeDef(td) => {
                 if let (
-                    TypeDef::Alias {
-                        header,
-                        ann: ann_type,
-                    },
+                    TypeDef::Alias { header, ann },
                     Some((
                         spaces_middle,
                         Stmt::ValueDef(ValueDef::Body(loc_pattern, loc_def_expr)),
                     )),
                 ) = (td, stmts.get(i + 1).map(|s| (s.before, s.item.value)))
                 {
-                    if spaces_middle.len() <= 1
+                    if (spaces_middle.len() <= 1 && !ends_with_spaces_conservative(&ann.value))
                         || header
                             .vars
                             .first()
@@ -3230,7 +3252,7 @@ fn stmts_to_defs<'a>(
                         let value_def = join_alias_to_body(
                             arena,
                             header,
-                            ann_type,
+                            ann,
                             spaces_middle,
                             loc_pattern,
                             loc_def_expr,
@@ -3288,7 +3310,8 @@ fn stmts_to_defs<'a>(
                     )),
                 ) = (vd, stmts.get(i + 1).map(|s| (s.before, s.item.value)))
                 {
-                    if spaces_middle.len() <= 1 || ann_pattern.value.equivalent(&loc_pattern.value)
+                    if (spaces_middle.len() <= 1 && !ends_with_spaces_conservative(&ann_type.value))
+                        || ann_pattern.value.equivalent(&loc_pattern.value)
                     {
                         let region = Region::span_across(&loc_pattern.region, &loc_def_expr.region);
 
@@ -3316,6 +3339,64 @@ fn stmts_to_defs<'a>(
         i += 1;
     }
     Ok((defs, last_expr))
+}
+
+fn ends_with_spaces_conservative(ty: &TypeAnnotation<'_>) -> bool {
+    match ty {
+        TypeAnnotation::Function(_, _, res) => ends_with_spaces_conservative(&res.value),
+        TypeAnnotation::Apply(_, _, args) => args
+            .last()
+            .map_or(false, |a| ends_with_spaces_conservative(&a.value)),
+        TypeAnnotation::As(_, _, type_header) => type_header
+            .vars
+            .last()
+            .map_or(false, |v| pat_ends_with_spaces_conservative(&v.value)),
+        TypeAnnotation::Record { fields: _, ext }
+        | TypeAnnotation::Tuple { elems: _, ext }
+        | TypeAnnotation::TagUnion { ext, tags: _ } => {
+            ext.map_or(false, |e| ends_with_spaces_conservative(&e.value))
+        }
+        TypeAnnotation::BoundVariable(_) | TypeAnnotation::Inferred | TypeAnnotation::Wildcard => {
+            false
+        }
+        TypeAnnotation::Where(_, clauses) => clauses.last().map_or(false, |c| {
+            c.value
+                .abilities
+                .last()
+                .map_or(false, |a| ends_with_spaces_conservative(&a.value))
+        }),
+        TypeAnnotation::SpaceBefore(inner, _) => ends_with_spaces_conservative(inner),
+        TypeAnnotation::SpaceAfter(_, _) => true,
+        TypeAnnotation::Malformed(_) => false,
+    }
+}
+
+fn pat_ends_with_spaces_conservative(pat: &Pattern<'_>) -> bool {
+    match pat {
+        Pattern::Identifier { .. }
+        | Pattern::QualifiedIdentifier { .. }
+        | Pattern::Tag(_)
+        | Pattern::NumLiteral(_)
+        | Pattern::FloatLiteral(_)
+        | Pattern::StrLiteral(_)
+        | Pattern::Underscore(_)
+        | Pattern::SingleQuote(_)
+        | Pattern::Tuple(_)
+        | Pattern::List(_)
+        | Pattern::NonBase10Literal { .. }
+        | Pattern::ListRest(_)
+        | Pattern::As(_, _)
+        | Pattern::OpaqueRef(_) => false,
+        Pattern::Apply(_, args) => args
+            .last()
+            .map_or(false, |a| pat_ends_with_spaces_conservative(&a.value)),
+        Pattern::RecordDestructure(_) => false,
+        Pattern::RequiredField(_, _) => unreachable!(),
+        Pattern::OptionalField(_, _) => unreachable!(),
+        Pattern::SpaceBefore(inner, _) => pat_ends_with_spaces_conservative(inner),
+        Pattern::SpaceAfter(_, _) => true,
+        Pattern::Malformed(_) | Pattern::MalformedIdent(_, _) => false,
+    }
 }
 
 /// Given a type alias and a value definition, join them into a AnnotatedBody
@@ -3822,7 +3903,7 @@ fn parse_bin_op(state: State<'_>, min_indent: u32) -> ParseResult<BinOp, EExpr<'
     match op {
         "+" => Ok((BinOp::Plus, state.inc())),
         "-" => {
-            if state.column() < min_indent && !is_next_space_or_comment(state.bytes()) {
+            if state.column() < min_indent && !is_next_space_or_comment_or_arrow(state.bytes()) {
                 // A unary minus must only match if we are at the correct indent level,
                 // indent level doesn't matter for the rest of the operators.
                 return Err((NoProgress, EExpr::BadOperator("-", state.pos())));
@@ -3860,12 +3941,12 @@ fn parse_bin_op(state: State<'_>, min_indent: u32) -> ParseResult<BinOp, EExpr<'
     }
 }
 
-/// Unary minus is distinguished by not having a space after it
+/// Unary minus is distinguished by not having a space after it, comment, or arrow '->'
 #[inline(always)]
-fn is_next_space_or_comment(bytes: &[u8]) -> bool {
+fn is_next_space_or_comment_or_arrow(bytes: &[u8]) -> bool {
     matches!(
         bytes.get(1),
-        None | Some(b' ' | b'#' | b'\n' | b'\r' | b'\t'),
+        None | Some(b' ' | b'\n' | b'\r' | b'\t' | b'#' | b'>'),
     )
 }
 

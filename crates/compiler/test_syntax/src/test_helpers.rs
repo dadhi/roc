@@ -4,7 +4,7 @@ use roc_parse::{
     ast::{Defs, Expr, FullAst, Header, Malformed, SpacesBefore},
     header::parse_module_defs,
     normalize::Normalize,
-    parser::{Parser, SyntaxError},
+    parser::SyntaxError,
     state::State,
     test_helpers::{parse_defs_with, parse_expr_with, parse_header_with},
 };
@@ -169,9 +169,7 @@ impl<'a> Input<'a> {
             Input::Full(input) => {
                 let state = State::new(input.as_bytes());
 
-                let min_indent = 0;
-                let (_, header, state) = roc_parse::header::header()
-                    .parse(arena, state.clone(), min_indent)
+                let (header, state) = roc_parse::header::header(arena, state.clone())
                     .map_err(|(_, fail)| SyntaxError::Header(fail))?;
 
                 let (new_header, defs) = header.item.upgrade_header_imports(arena);

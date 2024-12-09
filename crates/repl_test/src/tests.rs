@@ -631,6 +631,11 @@ fn identity_lambda() {
     expect_success("\\x -> x", "<function> : a -> a");
 }
 
+#[test]
+fn identity_lambda_shortcut() {
+    expect_success("\\.", "<function> : a -> a");
+}
+
 // not(debug_assertions) because of issue #6946
 #[cfg(all(not(feature = "wasm"), not(debug_assertions)))]
 #[test]

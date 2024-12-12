@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::blankspace::{eat_nc, eat_nc_check, SpacedBuilder};
 use crate::expr::merge_spaces;
 use crate::ident::{self, parse_anycase_ident, parse_lowercase_ident, UppercaseIdent};
+use crate::keyword;
 use crate::parser::Progress::{self, *};
 use crate::parser::{
     collection_inner, eat_keyword, EExposes, EHeader, EImports, EPackageEntry, EPackageName,
@@ -909,12 +910,12 @@ where
         Err((_, fail)) => return Err((NoProgress, fail)),
     };
 
-    let n = eat_keyword(K::KEYWORD, &state);
-    if n == 0 {
-        return Err((NoProgress, expectation(state.pos())));
-    }
+    let state = match eat_keyword(K::KEYWORD, &state) {
+        0 => return Err((NoProgress, expectation(state.pos()))),
+        n => state.leap(n),
+    };
 
-    let (_, after, state) = eat_nc_check(indent_problem2, arena, state.leap(n), min_indent, false)?;
+    let (_, after, state) = eat_nc_check(indent_problem2, arena, state, min_indent, false)?;
 
     let spaced_keyword = Spaces {
         before,
@@ -1077,12 +1078,8 @@ pub fn parse_typed_ident<'a>(
     let (_, (spaces_after_colon, _), state) = eat_nc(arena, state, true)?;
 
     let ann_pos = state.pos();
-    match parse_type_expr(
-        TRAILING_COMMA_VALID | SKIP_PARSING_SPACES_BEFORE,
-        arena,
-        state,
-        0,
-    ) {
+    let flags = TRAILING_COMMA_VALID | SKIP_PARSING_SPACES_BEFORE;
+    match parse_type_expr(flags, arena, state, 0) {
         Ok((ann, state)) => {
             let typed_ident = Spaced::Item(TypedIdent {
                 ident,
@@ -1161,7 +1158,7 @@ fn imports_entry<'a>(
         .map_err(|(p, _)| (p, EImports::StrLiteral(file_name_pos)))?;
 
     let (.., state) = eat_nc(arena, state, true)?;
-    if !state.bytes().starts_with(b"as") {
+    if !state.bytes().starts_with(keyword::AS.as_bytes()) {
         return Err((MadeProgress, EImports::AsKeyword(state.pos())));
     }
     let state = state.leap(2);

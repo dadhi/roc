@@ -351,6 +351,16 @@ where
 }
 
 #[inline(always)]
+pub fn require_newline_or_eof(arena: &Bump, state: &State<'_>, min_indent: u32) -> bool {
+    match eat_nc::<EExpr<'_>>(arena, state.clone(), false) {
+        Ok((_, (nl, _), state)) => {
+            (!nl.is_empty() && state.column() >= min_indent) || state.has_reached_end()
+        }
+        _ => false,
+    }
+}
+
+#[inline(always)]
 pub fn eat_nc_or_empty<'a>(
     arena: &'a Bump,
     state: State<'a>,

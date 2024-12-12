@@ -43,7 +43,7 @@ impl<'a> State<'a> {
     }
 
     pub fn column(&self) -> u32 {
-        self.pos().offset - self.line_start.offset
+        self.offset as u32 - self.line_start.offset
     }
 
     pub fn line_indent(&self) -> u32 {

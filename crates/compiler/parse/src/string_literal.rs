@@ -181,6 +181,7 @@ pub fn rest_of_str_like<'a>(
 
         match one_byte {
             b'"' if !is_single_quote => {
+                preceded_by_dollar = false;
                 if segment_parsed_bytes == 1 && segments.is_empty() {
                     // special case of the empty string
                     if is_multiline {
@@ -297,6 +298,7 @@ pub fn rest_of_str_like<'a>(
                 return Ok((StrLikeLiteral::SingleQuote(expr), state.inc()));
             }
             b'\n' => {
+                preceded_by_dollar = false;
                 if is_multiline {
                     let without_newline = &state.bytes()[0..(segment_parsed_bytes - 1)];
                     let with_newline = &state.bytes()[0..segment_parsed_bytes];
@@ -435,28 +437,23 @@ pub fn rest_of_str_like<'a>(
 
                 // Parse an arbitrary expression, followed by ')'
                 let expr_pos = state.pos();
-                let (_, (spaces_before, _), news) = eat_nc(arena, state, false)
+                let (_, (spaces_before, _), next) = eat_nc(arena, state, false)
                     .map_err(|(p, fail)| (p, EString::Format(arena.alloc(fail), expr_pos)))?;
 
-                let (expr, mut news) = parse_expr_start(
-                    CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING,
-                    None,
-                    arena,
-                    news,
-                    0,
-                )
-                .map_err(|(p, fail)| (p, EString::Format(arena.alloc(fail), expr_pos)))?;
+                let flags = CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING;
+                let (expr, mut next) = parse_expr_start(flags, None, arena, next, 0)
+                    .map_err(|(p, fail)| (p, EString::Format(arena.alloc(fail), expr_pos)))?;
 
                 let expr = expr.spaced_before(arena, spaces_before);
-                let expr = news.loc(expr_pos, &*arena.alloc(expr.value));
+                let expr = next.loc(expr_pos, &*arena.alloc(expr.value));
 
-                if news.bytes().first() != Some(&b')') {
-                    return Err((MadeProgress, EString::FormatEnd(news.pos())));
+                if next.bytes().first() != Some(&b')') {
+                    return Err((MadeProgress, EString::FormatEnd(next.pos())));
                 }
-                news.inc_mut();
+                next.inc_mut();
 
                 // Advance the iterator past the expr we just parsed.
-                for _ in 0..(original_byte_count - news.bytes().len()) {
+                for _ in 0..(original_byte_count - next.bytes().len()) {
                     bytes.next();
                 }
 
@@ -464,7 +461,7 @@ pub fn rest_of_str_like<'a>(
 
                 // Reset the segment
                 segment_parsed_bytes = 0;
-                state = news;
+                state = next;
             }
             _ => {
                 // All other characters need no special handling.

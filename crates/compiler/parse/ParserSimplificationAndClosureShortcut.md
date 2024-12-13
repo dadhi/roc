@@ -1,4 +1,4 @@
-# Simplify Parser and add closure shortcut features
+# Simplify Parser and Closure Shortcut feature
 
 ## Initial intent
 

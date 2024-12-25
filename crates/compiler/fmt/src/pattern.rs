@@ -396,7 +396,7 @@ fn fmt_pattern_only(
         }
 
         Pattern::As(pattern, pattern_as) => {
-            let needs_parens = parens == Parens::InAsPattern;
+            let needs_parens = parens == Parens::InAsPattern || parens == Parens::InApply; // todo: @wip existed in main but not in the funny_feat branch
 
             if needs_parens {
                 buf.indent(indent);

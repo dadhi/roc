@@ -540,14 +540,24 @@ pub fn desugar_expr<'a>(
                     LowLevelTry(new_sub_loc_expr, ResultTryKind::OperatorSuffix),
                 )),
                 TryTarget::Task => {
-                    let new_sub_expr = env.arena.alloc(new_sub_loc_expr.value);
-                    env.arena.alloc(Loc::at(
-                        loc_expr.region,
-                        TrySuffix {
-                            expr: new_sub_expr,
-                            target: *target,
-                        },
-                    ))
+                    match target {
+                        TryTarget::Result => env.arena.alloc(Loc::at(
+                            loc_expr.region,
+                            LowLevelTry(new_sub_loc_expr, ResultTryKind::OperatorSuffix),
+                        )),
+                        TryTarget::Task => {
+                            let new_sub_expr = env.arena.alloc(new_sub_loc_expr.value);
+                            // desugar the sub_expression, but leave the TrySuffix as this will
+                            // be unwrapped later in desugar_value_def_suffixed
+                            env.arena.alloc(Loc::at(
+                                loc_expr.region,
+                                TrySuffix {
+                                    expr: new_sub_expr,
+                                    target: *target,
+                                },
+                            ))
+                        }
+                    }
                 }
             }
         }

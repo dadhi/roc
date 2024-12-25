@@ -593,11 +593,13 @@ pub(crate) fn chomp_access_chain<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn assert_ident_parses<'a>(arena: &'a Bump, ident: &str, expected: Ident<'a>) {
         let s = State::new(ident.as_bytes());
         let (id, _) = parse_ident_chain(arena, s).unwrap();
         assert_eq!(id, expected);
     }
+
     fn assert_ident_parses_tag(arena: &Bump, ident: &str) {
         assert_ident_parses(arena, ident, Ident::Tag(ident));
     }
@@ -607,6 +609,7 @@ mod tests {
     fn assert_ident_parses_simple_access(arena: &Bump, ident: &str) {
         assert_ident_parses(arena, ident, Ident::Plain(ident));
     }
+
     fn assert_ident_parses_malformed(arena: &Bump, ident: &str, pos: Position) {
         assert_ident_parses(
             arena,
@@ -629,6 +632,7 @@ mod tests {
         assert_ident_parses_simple_access(&arena, "helloWorldThisIsQuiteATag23_");
         assert_ident_parses_simple_access(&arena, "helloworldthisisquiteatag23_");
     }
+
     #[test]
     fn test_parse_ident_lowercase_snake() {
         let arena = Bump::new();
@@ -639,6 +643,7 @@ mod tests {
         assert_ident_parses_simple_access(&arena, "hello_world_this_is_quite_a_var23");
         assert_ident_parses_simple_access(&arena, "hello_world_this_is_quite_a_var23_");
     }
+
     #[test]
     fn test_parse_tag_camel() {
         let arena = Bump::new();
@@ -649,6 +654,7 @@ mod tests {
         assert_ident_parses_tag(&arena, "HelloWorldThisIsQuiteATag");
         assert_ident_parses_tag(&arena, "HelloWorldThisIsQuiteATag23");
     }
+
     #[test]
     fn test_parse_tag_snake_is_malformed() {
         let arena = Bump::new();
@@ -665,6 +671,7 @@ mod tests {
             Position { offset: 33 },
         );
     }
+
     #[test]
     fn test_parse_opaque_ref_camel() {
         let arena = Bump::new();
@@ -675,6 +682,7 @@ mod tests {
         assert_ident_parses_opaque(&arena, "@HelloWorldThisIsQuiteARef");
         assert_ident_parses_opaque(&arena, "@HelloWorldThisIsQuiteARef23");
     }
+
     #[test]
     fn test_parse_opaque_ref_snake_is_malformed() {
         let arena = Bump::new();

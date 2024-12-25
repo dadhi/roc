@@ -13,10 +13,11 @@ use bumpalo::collections::Vec;
 use bumpalo::Bump;
 use roc_module::called_via::{self, BinOp, UnaryOp};
 use roc_parse::ast::{
-    AssignedField, Base, Collection, CommentOrNewline, Expr, ExtractSpaces, Pattern, Spaceable,
-    Spaces, SpacesAfter, SpacesBefore, TryTarget, WhenBranch,
+    AssignedField, Base, ClosureShortcut, Collection, CommentOrNewline, Expr, ExtractSpaces,
+    Pattern, Spaces, SpacesAfter, SpacesBefore, TryTarget, WhenBranch, WhenShortcut,
 };
 use roc_parse::ast::{StrLiteral, StrSegment};
+use roc_parse::blankspace::SpacedBuilder;
 use roc_parse::expr::merge_spaces;
 use roc_parse::ident::Accessor;
 use roc_parse::keyword;
@@ -66,14 +67,23 @@ fn format_expr_only(
         Expr::Str(literal) => {
             fmt_str_literal(buf, *literal, indent);
         }
-        Expr::Var { module_name, ident } => {
-            buf.indent(indent);
-            if !module_name.is_empty() {
-                buf.push_str(module_name);
+        Expr::Var {
+            module_name,
+            ident,
+            shortcut,
+        } => {
+            if shortcut.is_none() {
+                buf.indent(indent);
+                if !module_name.is_empty() {
+                    buf.push_str(module_name);
+                    buf.push('.');
+                }
+                buf.push_str(ident);
+            } else {
+                // if we reach this place and were not interrupted by the `RecordAccess` or `TupleAccess` which skips its var completely,
+                // then it means we format this kind of identity function `\.` where dot means the var identifier
                 buf.push('.');
             }
-
-            buf.push_str(ident);
         }
         Expr::Underscore(name) => {
             buf.indent(indent);
@@ -153,8 +163,8 @@ fn format_expr_only(
                 assigned_field_to_spaces,
             );
         }
-        Expr::Closure(loc_patterns, loc_ret) => {
-            fmt_closure(buf, loc_patterns, loc_ret, indent);
+        Expr::Closure(loc_patterns, loc_ret, shortcut) => {
+            fmt_closure(buf, loc_patterns, loc_ret, *shortcut, indent);
         }
         Expr::Backpassing(loc_patterns, loc_body, loc_ret) => {
             fmt_backpassing(buf, loc_patterns, loc_body, loc_ret, indent);
@@ -224,10 +234,12 @@ fn format_expr_only(
                 indent,
             );
         }
-        Expr::When(loc_condition, branches) => fmt_when(buf, loc_condition, branches, indent),
+        Expr::When(loc_condition, branches, shortcut) => {
+            fmt_when(buf, loc_condition, branches, *shortcut, indent)
+        }
         Expr::Tuple(items) => fmt_expr_collection(buf, indent, Braces::Round, *items, Newlines::No),
         Expr::List(items) => fmt_expr_collection(buf, indent, Braces::Square, *items, Newlines::No),
-        Expr::BinOps(lefts, right) => fmt_binops(buf, lefts, right, indent),
+        Expr::BinOps(lefts, right) => fmt_binops(buf, lefts, right, indent, None),
         Expr::UnaryOp(sub_expr, unary_op) => {
             buf.indent(indent);
             match &unary_op.value {
@@ -306,13 +318,17 @@ fn format_expr_only(
             buf.push('&');
             buf.push_str(key);
         }
-        Expr::RecordAccess(expr, key) => {
-            expr.format_with_options(buf, Parens::InApply, Newlines::Yes, indent);
+        Expr::RecordAccess(expr, key, shortcut) => {
+            if shortcut.is_none() {
+                expr.format_with_options(buf, Parens::InApply, Newlines::Yes, indent);
+            }
             buf.push('.');
             buf.push_str(key);
         }
-        Expr::TupleAccess(expr, key) => {
-            expr.format_with_options(buf, Parens::InApply, Newlines::Yes, indent);
+        Expr::TupleAccess(expr, key, shortcut) => {
+            if shortcut.is_none() {
+                expr.format_with_options(buf, Parens::InApply, Newlines::Yes, indent);
+            }
             buf.push('.');
             buf.push_str(key);
         }
@@ -372,12 +388,12 @@ pub fn expr_is_multiline(me: &Expr<'_>, comments_only: bool) -> bool {
             unreachable!("LowLevelTry should only exist after desugaring, not during formatting")
         }
 
-        Expr::RecordAccess(inner, _)
-        | Expr::TupleAccess(inner, _)
+        Expr::RecordAccess(inner, ..)
+        | Expr::TupleAccess(inner, ..)
         | Expr::TrySuffix { expr: inner, .. } => expr_is_multiline(inner, comments_only),
 
         // These expressions always have newlines
-        Expr::Defs(_, _) | Expr::When(_, _) => true,
+        Expr::Defs(_, _) | Expr::When(..) => true,
 
         Expr::List(items) => is_collection_multiline(items),
 
@@ -435,7 +451,7 @@ pub fn expr_is_multiline(me: &Expr<'_>, comments_only: bool) -> bool {
 
         Expr::ParensAround(subexpr) => expr_is_multiline(subexpr, comments_only),
 
-        Expr::Closure(loc_patterns, loc_body) => {
+        Expr::Closure(loc_patterns, loc_body, _) => {
             // check the body first because it's more likely to be multiline
             expr_is_multiline(&loc_body.value, comments_only)
                 || loc_patterns
@@ -513,7 +529,7 @@ fn requires_space_after_unary(item: &Expr<'_>) -> bool {
             is_negative,
         } => *is_negative,
         Expr::RecordUpdater(..) => true,
-        Expr::RecordAccess(inner, _field) => requires_space_after_unary(inner),
+        Expr::RecordAccess(inner, _field, _) => requires_space_after_unary(inner),
         Expr::Apply(inner, _, _) => requires_space_after_unary(&inner.value),
         Expr::TrySuffix { target: _, expr } => requires_space_after_unary(expr),
         Expr::SpaceAfter(inner, _) | Expr::SpaceBefore(inner, _) => {
@@ -572,7 +588,7 @@ fn fmt_apply(
                 })
                 .unwrap_or_default());
 
-    let arg_indent = if needs_indent {
+    let mut arg_indent = if needs_indent {
         indent + INDENT
     } else {
         indent
@@ -588,6 +604,18 @@ fn fmt_apply(
         .format_with_options(buf, Parens::InApply, Newlines::Yes, indent);
 
     let mut last_after = expr.after;
+
+    if needs_indent {
+        let real_indent = buf.get_real_indent_in_text();
+
+        // round to the indentation level
+        debug_assert!(INDENT % 2 == 0);
+        let real_indent = (real_indent + (INDENT - 1)) & !(INDENT - 1);
+
+        if real_indent < indent {
+            arg_indent = real_indent + INDENT
+        }
+    }
 
     for (i, loc_arg) in loc_args.iter().enumerate() {
         let is_last_arg = i == loc_args.len() - 1;
@@ -654,6 +682,7 @@ fn fmt_parens(sub_expr: &Expr<'_>, buf: &mut Buf<'_>, indent: u16) {
 
     buf.indent(indent);
     buf.push('(');
+
     if should_add_newlines {
         buf.newline();
     }
@@ -817,6 +846,7 @@ fn push_op(buf: &mut Buf, op: BinOp) {
         called_via::BinOp::And => buf.push_str("&&"),
         called_via::BinOp::Or => buf.push_str("||"),
         called_via::BinOp::Pizza => buf.push_str("|>"),
+        called_via::BinOp::When => buf.push_str("~"),
     }
 }
 
@@ -994,7 +1024,7 @@ pub fn expr_lift_spaces<'a, 'b: 'a>(
                 after: final_expr_lifted.after,
             }
         }
-        Expr::Closure(pats, body) => {
+        Expr::Closure(pats, body, shortcut) => {
             if parens == Parens::InApply {
                 return Spaces {
                     before: &[],
@@ -1006,11 +1036,15 @@ pub fn expr_lift_spaces<'a, 'b: 'a>(
 
             Spaces {
                 before: &[],
-                item: Expr::Closure(pats, arena.alloc(Loc::at(body.region, body_lifted.item))),
+                item: Expr::Closure(
+                    pats,
+                    arena.alloc(Loc::at(body.region, body_lifted.item)),
+                    *shortcut,
+                ),
                 after: body_lifted.after,
             }
         }
-        Expr::If { .. } | Expr::When(_, _) | Expr::Return(_, _) => {
+        Expr::If { .. } | Expr::When(_, _, _) | Expr::Return(_, _) => {
             if parens == Parens::InApply || parens == Parens::InApplyLastArg {
                 Spaces {
                     before: &[],
@@ -1086,8 +1120,8 @@ pub fn expr_lift_spaces<'a, 'b: 'a>(
         | Expr::SingleQuote(_)
         | Expr::AccessorFunction(_)
         | Expr::RecordUpdater(_)
-        | Expr::RecordAccess(_, _)
-        | Expr::TupleAccess(_, _)
+        | Expr::RecordAccess(_, _, _)
+        | Expr::TupleAccess(_, _, _)
         | Expr::Var { .. }
         | Expr::Underscore(_)
         | Expr::Crash
@@ -1196,7 +1230,7 @@ pub fn expr_lift_spaces_before<'a, 'b: 'a>(
     let lifted = expr_lift_spaces(parens, arena, expr);
     SpacesBefore {
         before: lifted.before,
-        item: lifted.item.maybe_after(arena, lifted.after),
+        item: lifted.item.spaced_after(arena, lifted.after),
     }
 }
 
@@ -1207,7 +1241,7 @@ pub fn expr_lift_spaces_after<'a, 'b: 'a>(
 ) -> SpacesAfter<'a, Expr<'a>> {
     let lifted = expr_lift_spaces(parens, arena, expr);
     SpacesAfter {
-        item: lifted.item.maybe_before(arena, lifted.before),
+        item: lifted.item.spaced_before(arena, lifted.before),
         after: lifted.after,
     }
 }
@@ -1240,44 +1274,54 @@ fn fmt_binops<'a>(
     buf: &mut Buf,
     lefts: &'a [(Loc<Expr<'a>>, Loc<BinOp>)],
     loc_right_side: &'a Loc<Expr<'a>>,
-
-    indent: u16,
+    mut indent: u16,
+    closure_shortcut: Option<ClosureShortcut>,
 ) {
     let is_multiline = loc_right_side.value.is_multiline()
         || lefts.iter().any(|(expr, _)| expr.value.is_multiline());
 
+    // set the additional closure body indent from the start
+    let is_shortcut = closure_shortcut.is_some();
+    if is_shortcut {
+        indent += INDENT;
+    }
+
+    let mut skip = closure_shortcut == Some(ClosureShortcut::BinOp);
+
     for (loc_left_side, loc_binop) in lefts {
         let binop = loc_binop.value;
+        if !skip {
+            let lifted_left_side =
+                expr_lift_spaces(Parens::InOperator, buf.text.bump(), &loc_left_side.value);
+            format_spaces(buf, lifted_left_side.before, Newlines::Yes, indent);
 
-        let lifted_left_side =
-            expr_lift_spaces(Parens::InOperator, buf.text.bump(), &loc_left_side.value);
-        format_spaces(buf, lifted_left_side.before, Newlines::Yes, indent);
+            let need_parens = matches!(lifted_left_side.item, Expr::BinOps(..))
+                || !is_shortcut && starts_with_unary_minus(lifted_left_side.item);
 
-        let need_parens = matches!(lifted_left_side.item, Expr::BinOps(..))
-            || starts_with_unary_minus(lifted_left_side.item);
+            if need_parens {
+                fmt_parens(&lifted_left_side.item, buf, indent);
+            } else {
+                lifted_left_side.item.format_with_options(
+                    buf,
+                    Parens::InOperator,
+                    Newlines::Yes,
+                    indent,
+                );
+            }
 
-        if need_parens {
-            fmt_parens(&lifted_left_side.item, buf, indent);
-        } else {
-            lifted_left_side.item.format_with_options(
-                buf,
-                Parens::InOperator,
-                Newlines::Yes,
-                indent,
-            );
-        }
+            format_spaces(buf, lifted_left_side.after, Newlines::Yes, indent);
 
-        format_spaces(buf, lifted_left_side.after, Newlines::Yes, indent);
+            if is_multiline {
+                buf.ensure_ends_with_newline();
+                buf.indent(indent);
+            } else {
+                buf.spaces(1);
+            }
 
-        if is_multiline {
-            buf.ensure_ends_with_newline();
-            buf.indent(indent);
-        } else {
-            buf.spaces(1);
+            skip = false;
         }
 
         push_op(buf, binop);
-
         buf.spaces(1);
     }
 
@@ -1346,7 +1390,12 @@ fn is_when_patterns_multiline(when_branch: &WhenBranch) -> bool {
     is_multiline_patterns
 }
 
-fn fmt_if_or_when_condition<'a>(buf: &mut Buf, loc_condition: &'a Loc<Expr<'a>>, indent: u16) {
+fn fmt_if_or_when_condition<'a>(
+    buf: &mut Buf,
+    loc_condition: &'a Loc<Expr<'a>>,
+    indent: u16,
+    shortcut: Option<WhenShortcut>,
+) {
     let is_multiline_condition = loc_condition.is_multiline();
 
     if is_multiline_condition {
@@ -1371,7 +1420,10 @@ fn fmt_if_or_when_condition<'a>(buf: &mut Buf, loc_condition: &'a Loc<Expr<'a>>,
         buf.ensure_ends_with_newline();
         buf.indent(indent);
     } else {
-        buf.spaces(1);
+        if shortcut.is_none() {
+            // normal space after 'when', in other cases we don't have a 'when' and starting with the identifier
+            buf.spaces(1);
+        }
         loc_condition.format_with_options(buf, Parens::NotNeeded, Newlines::Yes, indent);
         buf.spaces(1);
     }
@@ -1381,14 +1433,24 @@ fn fmt_when<'a>(
     buf: &mut Buf,
     loc_condition: &'a Loc<Expr<'a>>,
     branches: &[&'a WhenBranch<'a>],
-
+    shortcut: Option<WhenShortcut>,
     indent: u16,
 ) {
-    buf.ensure_ends_with_newline();
-    buf.indent(indent);
-    buf.push_str("when");
-    fmt_if_or_when_condition(buf, loc_condition, indent);
-    buf.push_str("is");
+    if shortcut.is_none() {
+        buf.ensure_ends_with_newline();
+        buf.indent(indent);
+        buf.push_str("when");
+    }
+
+    if shortcut != Some(WhenShortcut::Closure) {
+        fmt_if_or_when_condition(buf, loc_condition, indent, shortcut);
+    }
+
+    match shortcut {
+        None => buf.push_str("is"),
+        _ => buf.push_str("~"),
+    }
+
     buf.newline();
 
     let mut prev_branch_was_multiline = false;
@@ -1624,7 +1686,7 @@ fn fmt_if<'a>(
         }
 
         buf.push_str("if");
-        fmt_if_or_when_condition(buf, loc_condition, indent);
+        fmt_if_or_when_condition(buf, loc_condition, indent, None);
         buf.push_str("then");
 
         if is_multiline {
@@ -1666,7 +1728,7 @@ fn fmt_closure<'a>(
     buf: &mut Buf,
     loc_patterns: &'a [Loc<Pattern<'a>>],
     loc_ret: &'a Loc<Expr<'a>>,
-
+    closure_shortcut: Option<ClosureShortcut>,
     indent: u16,
 ) {
     use self::Expr::*;
@@ -1674,80 +1736,123 @@ fn fmt_closure<'a>(
     buf.indent(indent);
     buf.push('\\');
 
-    let arguments_are_multiline = loc_patterns
-        .iter()
-        .any(|loc_pattern| loc_pattern.is_multiline());
+    let mut skip_arg = false;
+    if closure_shortcut.is_some() {
+        let shortcut_expr = if let UnaryOp(operand, _) = loc_ret.value {
+            operand.value
+        } else {
+            loc_ret.value
+        };
 
-    // If the arguments are multiline, go down a line and indent.
-    let indent = if arguments_are_multiline {
-        indent + INDENT
-    } else {
-        indent
-    };
+        match shortcut_expr {
+            RecordAccess(..) | TupleAccess(..) | Var { .. } => {
+                // skip formatting the arguments, and go to the body
+                // the shortcut will be handled in respective expression in the body
+                skip_arg = true;
+            }
+            BinOps(lefts, right) => {
+                fmt_binops(buf, lefts, right, indent, closure_shortcut);
+                return;
+            }
+            When(cond, branches, when_shortcut) => {
+                match cond.value {
+                    RecordAccess(..) | TupleAccess(..) => {
+                        // pass WhenShortcut::BinOp here to keep the condition and delegate shortcut handling to the accessors in condition
+                        fmt_when(buf, cond, branches, Some(WhenShortcut::BinOp), indent);
+                    }
+                    BinOps(lefts, right) => {
+                        fmt_binops(buf, lefts, right, indent, closure_shortcut);
+                        // space before the ` ~` operator
+                        buf.spaces(1);
+                        // set the closure shortcut to skip formatting the condition altogether, because it is done above
+                        fmt_when(buf, cond, branches, Some(WhenShortcut::Closure), indent);
+                    }
+                    _ => {
+                        fmt_when(buf, cond, branches, when_shortcut, indent);
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
 
-    let mut first = true;
+    if !skip_arg {
+        let arguments_are_multiline = loc_patterns
+            .iter()
+            .any(|loc_pattern| loc_pattern.is_multiline());
 
-    for loc_pattern in loc_patterns.iter() {
-        if !first {
+        // If the arguments are multiline, go down a line and indent.
+        let indent = if arguments_are_multiline {
+            indent + INDENT
+        } else {
+            indent
+        };
+
+        let mut first = true;
+
+        for loc_pattern in loc_patterns.iter() {
+            if !first {
+                buf.indent(indent);
+                if arguments_are_multiline {
+                    buf.push(',');
+                    buf.newline();
+                } else {
+                    buf.push_str(",");
+                    buf.spaces(1);
+                }
+            }
+            first = false;
+
+            let arg = pattern_lift_spaces(buf.text.bump(), &loc_pattern.value);
+
+            if !arg.before.is_empty() {
+                fmt_comments_only(buf, arg.before.iter(), NewlineAt::Bottom, indent)
+            }
+
+            arg.item
+                .format_with_options(buf, Parens::InAsPattern, Newlines::No, indent);
+
+            if !arg.after.is_empty() {
+                if starts_with_inline_comment(arg.after.iter()) {
+                    buf.spaces(1);
+                }
+                fmt_comments_only(buf, arg.after.iter(), NewlineAt::Bottom, indent)
+            }
+        }
+
+        if arguments_are_multiline {
+            buf.ensure_ends_with_newline();
             buf.indent(indent);
-            if arguments_are_multiline {
-                buf.push(',');
-                buf.newline();
-            } else {
-                buf.push_str(",");
-                buf.spaces(1);
-            }
-        }
-        first = false;
-
-        let arg = pattern_lift_spaces(buf.text.bump(), &loc_pattern.value);
-
-        if !arg.before.is_empty() {
-            fmt_comments_only(buf, arg.before.iter(), NewlineAt::Bottom, indent)
-        }
-
-        arg.item
-            .format_with_options(buf, Parens::InAsPattern, Newlines::No, indent);
-
-        if !arg.after.is_empty() {
-            if starts_with_inline_comment(arg.after.iter()) {
-                buf.spaces(1);
-            }
-            fmt_comments_only(buf, arg.after.iter(), NewlineAt::Bottom, indent)
-        }
-    }
-
-    if arguments_are_multiline {
-        buf.ensure_ends_with_newline();
-        buf.indent(indent);
-    } else {
-        buf.spaces(1);
-    }
-
-    buf.push_str("->");
-
-    let is_multiline = loc_ret.value.is_multiline();
-
-    // If the body is multiline, go down a line and indent.
-    let body_indent = if is_multiline {
-        indent + INDENT
-    } else {
-        indent
-    };
-
-    // the body of the Closure can be on the same line, or
-    // on a new line. If it's on the same line, insert a space.
-
-    match &loc_ret.value {
-        SpaceBefore(_, _) => {
-            // the body starts with (first comment and then) a newline
-            // do nothing
-        }
-        _ => {
-            // add a space after the `->`
+        } else {
             buf.spaces(1);
         }
-    };
+
+        buf.push_str("->");
+
+        // the body of the Closure can be on the same line, or
+        // on a new line. If it's on the same line, insert a space.
+        match &loc_ret.value {
+            SpaceBefore(_, _) => {
+                // the body starts with (first comment and then) a newline
+                // do nothing
+            }
+            _ => {
+                // add a space after the `->`
+                buf.spaces(1);
+            }
+        };
+    }
+
+    // If the body is multiline, go down a line and indent.
+    let is_multiline = loc_ret.value.is_multiline();
+    let body_indent =
+        // just a bit of nicety niceness to avoid double indent for the ~ multiple when branches in the lambda body
+        if is_multiline && !matches!(loc_ret.value, When(.., Some(WhenShortcut::BinOp))) {
+            indent + INDENT
+        } else {
+            indent
+        };
 
     if is_multiline {
         match &loc_ret.value {
@@ -2054,7 +2159,8 @@ pub fn sub_expr_requests_parens(expr: &Expr<'_>) -> bool {
                     | BinOp::GreaterThanOrEq
                     | BinOp::And
                     | BinOp::Or
-                    | BinOp::Pizza => true,
+                    | BinOp::Pizza
+                    | BinOp::When => true,
                 })
         }
         Expr::If { .. } => true,

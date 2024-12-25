@@ -6,12 +6,11 @@ use roc_region::all::{Loc, Region};
 
 use crate::{
     ast::CommentOrNewline,
-    blankspace::loc_spaces,
+    blankspace::eat_nc_locs,
     keyword::KEYWORDS,
-    number_literal::positive_number_literal,
-    parser::{EExpr, ParseResult, Parser},
+    number_literal::parse_number_base,
     state::State,
-    string_literal::{parse_str_like_literal, StrLikeLiteral},
+    string_literal::{rest_of_str_like, StrLikeLiteral},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,7 +73,7 @@ pub fn highlight(text: &str) -> Vec<Loc<Token>> {
     let header_keywords = HEADER_KEYWORDS.iter().copied().collect::<HashSet<_>>();
     let body_keywords = KEYWORDS.iter().copied().collect::<HashSet<_>>();
 
-    if let Ok((_prog, _, new_state)) = crate::header::header().parse(&arena, state.clone(), 0) {
+    if let Ok((_, new_state)) = crate::header::parse_header(&arena, state.clone()) {
         let inner_state =
             State::new(text[..state.bytes().len() - new_state.bytes().len()].as_bytes());
         highlight_inner(&arena, inner_state, &mut tokens, &header_keywords);
@@ -97,9 +96,7 @@ fn highlight_inner<'a>(
         if let Ok((b, _width)) = char::from_utf8_slice_start(state.bytes()) {
             match b {
                 ' ' | '\n' | '\t' | '\r' | '#' => {
-                    let res: ParseResult<'a, _, EExpr<'a>> =
-                        loc_spaces().parse(arena, state.clone(), 0);
-                    if let Ok((_, spaces, new_state)) = res {
+                    if let Some((spaces, new_state)) = eat_nc_locs(arena, state.clone()) {
                         state = new_state;
                         for space in spaces {
                             let token = match space.value {
@@ -116,22 +113,18 @@ fn highlight_inner<'a>(
                     }
                 }
                 '"' | '\'' => {
-                    if let Ok((_, item, new_state)) =
-                        parse_str_like_literal().parse(arena, state.clone(), 0)
+                    let column = state.column();
+                    state.leap_mut(1);
+                    if let Ok((item, new_state)) =
+                        rest_of_str_like(b == '\'', column, arena, state.clone())
                     {
                         state = new_state;
                         match item {
                             StrLikeLiteral::SingleQuote(_) => {
-                                tokens.push(Loc::at(
-                                    Region::between(start, state.pos()),
-                                    Token::SingleQuote,
-                                ));
+                                tokens.push(state.loc(start, Token::SingleQuote));
                             }
                             StrLikeLiteral::Str(_) => {
-                                tokens.push(Loc::at(
-                                    Region::between(start, state.pos()),
-                                    Token::String,
-                                ));
+                                tokens.push(state.loc(start, Token::String));
                             }
                         }
                     } else {
@@ -154,7 +147,7 @@ fn highlight_inner<'a>(
                     }
 
                     let ident = std::str::from_utf8(&buffer[..chomped]).unwrap();
-                    state.advance_mut(chomped);
+                    state.leap_mut(chomped);
 
                     if keywords.contains(ident) {
                         tokens.push(Loc::at(Region::between(start, state.pos()), Token::Keyword));
@@ -170,12 +163,12 @@ fn highlight_inner<'a>(
                     }
                 }
                 '.' => {
-                    state.advance_mut(1);
-                    tokens.push(Loc::at(Region::between(start, state.pos()), Token::Decimal));
+                    state.inc_mut();
+                    tokens.push(state.loc(start, Token::Decimal));
                 }
                 '0'..='9' => {
-                    if let Ok((_, _item, new_state)) =
-                        positive_number_literal().parse(arena, state.clone(), 0)
+                    if let Ok((_, new_state)) =
+                        parse_number_base(false, state.bytes(), state.clone())
                     {
                         state = new_state;
                         tokens.push(Loc::at(Region::between(start, state.pos()), Token::Number));
@@ -184,9 +177,9 @@ fn highlight_inner<'a>(
                     }
                 }
                 ':' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'=') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::ColonEquals
                     } else {
                         Token::Colon
@@ -194,12 +187,12 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '|' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'>') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::Pizza
                     } else if state.bytes().first() == Some(&b'|') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::DoubleBar
                     } else {
                         Token::Bar
@@ -207,9 +200,9 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '&' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'&') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::DoubleAnd
                     } else {
                         Token::And
@@ -217,9 +210,9 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '-' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'>') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::Arrow
                     } else {
                         Token::Minus
@@ -227,13 +220,13 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '+' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Plus));
                 }
                 '=' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'=') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::DoubleEquals
                     } else {
                         Token::Equals
@@ -241,9 +234,9 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '>' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'=') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::GreaterThanEquals
                     } else {
                         Token::GreaterThan
@@ -251,12 +244,12 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '<' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'=') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::LessThanEquals
                     } else if state.bytes().first() == Some(&b'-') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::Backpass
                     } else {
                         Token::LessThan
@@ -264,9 +257,9 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '!' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'=') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::BangEquals
                     } else {
                         Token::Bang
@@ -274,49 +267,49 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 ',' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Comma));
                 }
                 '_' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(
                         Region::between(start, state.pos()),
                         Token::Underscore,
                     ));
                 }
                 '?' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(
                         Region::between(start, state.pos()),
                         Token::QuestionMark,
                     ));
                 }
                 '%' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Percent));
                 }
                 '*' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(
                         Region::between(start, state.pos()),
                         Token::Multiply,
                     ));
                 }
                 '^' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Caret));
                 }
                 '\\' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(
                         Region::between(start, state.pos()),
                         Token::Backslash,
                     ));
                 }
                 '/' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     let tok = if state.bytes().first() == Some(&b'/') {
-                        state.advance_mut(1);
+                        state.leap_mut(1);
                         Token::DoubleSlash
                     } else {
                         Token::Slash
@@ -324,23 +317,23 @@ fn highlight_inner<'a>(
                     tokens.push(Loc::at(Region::between(start, state.pos()), tok));
                 }
                 '@' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::AtSign));
                 }
                 '{' | '}' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Brace));
                 }
                 '[' | ']' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Bracket));
                 }
                 '(' | ')' => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Paren));
                 }
                 _ => {
-                    state.advance_mut(1);
+                    state.leap_mut(1);
                     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Other));
                 }
             }
@@ -360,7 +353,7 @@ fn fast_forward_to(
         if end(*b) {
             break;
         }
-        state.advance_mut(1);
+        state.leap_mut(1);
     }
     tokens.push(Loc::at(Region::between(start, state.pos()), Token::Error));
 }

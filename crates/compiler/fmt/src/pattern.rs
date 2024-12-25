@@ -6,8 +6,9 @@ use crate::spaces::{fmt_comments_only, fmt_spaces, NewlineAt, INDENT};
 use crate::Buf;
 use bumpalo::Bump;
 use roc_parse::ast::{
-    Base, CommentOrNewline, Pattern, PatternAs, Spaceable, Spaces, SpacesAfter, SpacesBefore,
+    Base, CommentOrNewline, Pattern, PatternAs, Spaces, SpacesAfter, SpacesBefore,
 };
+use roc_parse::blankspace::SpacedBuilder;
 use roc_parse::expr::merge_spaces;
 use roc_region::all::Loc;
 
@@ -395,7 +396,7 @@ fn fmt_pattern_only(
         }
 
         Pattern::As(pattern, pattern_as) => {
-            let needs_parens = parens == Parens::InAsPattern || parens == Parens::InApply;
+            let needs_parens = parens == Parens::InAsPattern || parens == Parens::InApply; // todo: @wip existed in main but not in the funny_feat branch
 
             if needs_parens {
                 buf.indent(indent);
@@ -526,7 +527,7 @@ pub fn pattern_lift_spaces_before<'a, 'b: 'a>(
     let lifted = pattern_lift_spaces(arena, pat);
     SpacesBefore {
         before: lifted.before,
-        item: lifted.item.maybe_after(arena, lifted.after),
+        item: lifted.item.spaced_after(arena, lifted.after),
     }
 }
 
@@ -536,7 +537,7 @@ pub fn pattern_lift_spaces_after<'a, 'b: 'a>(
 ) -> SpacesAfter<'a, Pattern<'a>> {
     let lifted = pattern_lift_spaces(arena, pat);
     SpacesAfter {
-        item: lifted.item.maybe_before(arena, lifted.before),
+        item: lifted.item.spaced_before(arena, lifted.before),
         after: lifted.after,
     }
 }

@@ -1,9 +1,10 @@
 use crate::ast::CommentOrNewline;
 use crate::ast::Spaceable;
-use crate::parser::succeed;
+use crate::parser::EExpr;
+use crate::parser::ParseResult;
 use crate::parser::Progress;
 use crate::parser::SpaceProblem;
-use crate::parser::{self, and, backtrackable, BadInputError, Parser, Progress::*};
+use crate::parser::{BadInputError, Progress::*};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
@@ -11,202 +12,74 @@ use roc_region::all::Loc;
 use roc_region::all::Position;
 use roc_region::all::Region;
 
-pub fn space0_around_ee<'a, P, S, E>(
-    parser: P,
-    indent_before_problem: fn(Position) -> E,
-    indent_after_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(
-            space0_e(indent_before_problem),
-            and(parser, space0_e(indent_after_problem)),
-        ),
-        spaces_around_help,
-    )
-}
+pub trait SpacedBuilder<'a, T: 'a + Spaceable<'a>> {
+    fn spaced_before(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self;
 
-pub fn spaces_around<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(and(spaces(), and(parser, spaces())), spaces_around_help)
-}
+    fn spaced_after(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self;
 
-pub fn space0_around_e_no_after_indent_check<'a, P, S, E>(
-    parser: P,
-    indent_before_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(space0_e(indent_before_problem), and(parser, spaces())),
-        spaces_around_help,
-    )
-}
-
-pub fn space0_before_optional_after<'a, P, S, E>(
-    parser: P,
-    indent_before_problem: fn(Position) -> E,
-    indent_after_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(
-            space0_e(indent_before_problem),
-            and(
-                parser,
-                one_of![
-                    backtrackable(space0_e(indent_after_problem)),
-                    succeed(&[] as &[_]),
-                ],
-            ),
-        ),
-        spaces_around_help,
-    )
-}
-
-pub fn spaces_before_optional_after<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(
-            spaces(),
-            and(
-                parser,
-                one_of![backtrackable(spaces()), succeed(&[] as &[_]),],
-            ),
-        ),
-        spaces_around_help,
-    )
-}
-
-fn spaces_around_help<'a, S>(
-    arena: &'a Bump,
-    tuples: (
-        &'a [CommentOrNewline<'a>],
-        (Loc<S>, &'a [CommentOrNewline<'a>]),
-    ),
-) -> Loc<S>
-where
-    S: 'a + Spaceable<'a>,
-{
-    let (spaces_before, (loc_val, spaces_after)) = tuples;
-
-    if spaces_before.is_empty() {
-        if spaces_after.is_empty() {
-            loc_val
-        } else {
-            arena
-                .alloc(loc_val.value)
-                .with_spaces_after(spaces_after, loc_val.region)
-        }
-    } else if spaces_after.is_empty() {
-        arena
-            .alloc(loc_val.value)
-            .with_spaces_before(spaces_before, loc_val.region)
-    } else {
-        let wrapped_expr = arena
-            .alloc(loc_val.value)
-            .with_spaces_after(spaces_after, loc_val.region);
-
-        arena
-            .alloc(wrapped_expr.value)
-            .with_spaces_before(spaces_before, wrapped_expr.region)
+    #[inline(always)]
+    fn spaced_around(
+        self,
+        arena: &'a Bump,
+        spaces_before: &'a [CommentOrNewline<'a>],
+        spaces_after: &'a [CommentOrNewline<'a>],
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.spaced_after(arena, spaces_after)
+            .spaced_before(arena, spaces_before)
     }
 }
 
-pub fn spaces_before<'a, P, S, E>(parser: P) -> impl Parser<'a, Loc<S>, E>
+impl<'a, T> SpacedBuilder<'a, T> for T
 where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
+    T: 'a + Spaceable<'a>,
 {
-    parser::map_with_arena(
-        and(spaces(), parser),
-        |arena: &'a Bump, (space_list, loc_expr): (&'a [CommentOrNewline<'a>], Loc<S>)| {
-            if space_list.is_empty() {
-                loc_expr
-            } else {
-                arena
-                    .alloc(loc_expr.value)
-                    .with_spaces_before(space_list, loc_expr.region)
-            }
-        },
-    )
-}
-
-pub fn space0_before_e<'a, P, S, E>(
-    parser: P,
-    indent_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(space0_e(indent_problem), parser),
-        |arena: &'a Bump, (space_list, loc_expr): (&'a [CommentOrNewline<'a>], Loc<S>)| {
-            if space_list.is_empty() {
-                loc_expr
-            } else {
-                arena
-                    .alloc(loc_expr.value)
-                    .with_spaces_before(space_list, loc_expr.region)
-            }
-        },
-    )
-}
-
-pub fn space0_after_e<'a, P, S, E>(
-    parser: P,
-    indent_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<S>, E>
-where
-    S: 'a + Spaceable<'a>,
-    P: 'a + Parser<'a, Loc<S>, E>,
-    E: 'a + SpaceProblem,
-{
-    parser::map_with_arena(
-        and(parser, space0_e(indent_problem)),
-        |arena: &'a Bump, (loc_expr, space_list): (Loc<S>, &'a [CommentOrNewline<'a>])| {
-            if space_list.is_empty() {
-                loc_expr
-            } else {
-                arena
-                    .alloc(loc_expr.value)
-                    .with_spaces_after(space_list, loc_expr.region)
-            }
-        },
-    )
-}
-
-pub fn check_indent<'a, E>(indent_problem: fn(Position) -> E) -> impl Parser<'a, (), E>
-where
-    E: 'a,
-{
-    move |_, state: State<'a>, min_indent: u32| {
-        if state.column() >= min_indent {
-            Ok((NoProgress, (), state))
+    #[inline(always)]
+    fn spaced_before(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
         } else {
-            Err((NoProgress, indent_problem(state.pos())))
+            arena.alloc(self).before(spaces)
+        }
+    }
+
+    #[inline(always)]
+    fn spaced_after(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
+        } else {
+            arena.alloc(self).after(spaces)
+        }
+    }
+}
+
+impl<'a, T> SpacedBuilder<'a, T> for Loc<T>
+where
+    T: 'a + Spaceable<'a>,
+{
+    #[inline(always)]
+    fn spaced_before(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
+        } else {
+            Loc {
+                region: self.region,
+                value: arena.alloc(self.value).before(spaces),
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn spaced_after(self, arena: &'a Bump, spaces: &'a [CommentOrNewline]) -> Self {
+        if spaces.is_empty() {
+            self
+        } else {
+            Loc {
+                region: self.region,
+                value: arena.alloc(self.value).after(spaces),
+            }
         }
     }
 }
@@ -323,145 +196,86 @@ pub fn fast_eat_until_control_character(bytes: &[u8]) -> usize {
     simple_eat_until_control_character(&bytes[i..]) + i
 }
 
-pub fn space0_e<'a, E>(
+/// Eat NewLines and Comments with ident check
+#[allow(clippy::type_complexity)]
+pub fn eat_nc_check<'a, E>(
     indent_problem: fn(Position) -> E,
-) -> impl Parser<'a, &'a [CommentOrNewline<'a>], E>
+    arena: &'a Bump,
+    state: State<'a>,
+    min_indent: u32,
+    err_made_progress: bool,
+) -> Result<(Progress, &'a [CommentOrNewline<'a>], State<'a>), (Progress, E)>
 where
     E: 'a + SpaceProblem,
 {
-    move |arena, state: State<'a>, min_indent: u32| {
-        let start = state.pos();
-        match spaces().parse(arena, state, min_indent) {
-            Ok((progress, spaces, state)) => {
-                if spaces.is_empty() || state.column() >= min_indent {
-                    Ok((progress, spaces, state))
-                } else {
-                    Err((progress, indent_problem(start)))
-                }
-            }
-            Err((progress, err)) => Err((progress, err)),
-        }
-    }
-}
-
-pub fn require_newline_or_eof<'a, E>(newline_problem: fn(Position) -> E) -> impl Parser<'a, (), E>
-where
-    E: 'a + SpaceProblem,
-{
-    move |arena: &'a Bump, state: State<'a>, min_indent| {
-        // TODO: we can do this more efficiently by stopping as soon as we see a '#' or a newline
-        let (_, res, _) = space0_e(newline_problem).parse(arena, state.clone(), min_indent)?;
-
-        if !res.is_empty() || state.has_reached_end() {
-            Ok((NoProgress, (), state))
+    let start = state.pos();
+    let (ok_pr, (sp, _), state) = eat_nc(arena, state, err_made_progress)?;
+    if !sp.is_empty() && state.column() < min_indent {
+        let err_pr = if err_made_progress {
+            MadeProgress
         } else {
-            Err((NoProgress, newline_problem(state.pos())))
-        }
+            ok_pr
+        };
+        return Err((err_pr, indent_problem(start)));
     }
+    Ok((ok_pr, sp, state))
 }
 
-pub fn loc_space0_e<'a, E>(
+pub fn eat_nc_loc_c<'a, E>(
     indent_problem: fn(Position) -> E,
-) -> impl Parser<'a, Loc<&'a [CommentOrNewline<'a>]>, E>
+    arena: &'a Bump,
+    state: State<'a>,
+    min_indent: u32,
+    err_made_progress: bool,
+) -> ParseResult<'a, Loc<&'a [CommentOrNewline<'a>]>, E>
 where
     E: 'a + SpaceProblem,
 {
-    move |arena, state: State<'a>, min_indent: u32| {
-        let mut newlines = Vec::new_in(arena);
-        let start = state.pos();
-        let mut comment_start = None;
-        let mut comment_end = None;
-
-        let res = consume_spaces(state, |start, space, end| {
-            newlines.push(space);
-            if !matches!(space, CommentOrNewline::Newline) {
-                if comment_start.is_none() {
-                    comment_start = Some(start);
-                }
-                comment_end = Some(end);
-            }
-        });
-
-        match res {
-            Ok((progress, state)) => {
-                if newlines.is_empty() || state.column() >= min_indent {
-                    let start = comment_start.unwrap_or(state.pos());
-                    let end = comment_end.unwrap_or(state.pos());
-                    let region = Region::new(start, end);
-                    Ok((progress, Loc::at(region, newlines.into_bump_slice()), state))
-                } else {
-                    Err((progress, indent_problem(start)))
-                }
-            }
-            Err((progress, err)) => Err((progress, err)),
-        }
+    let start = state.pos();
+    let (ok_pr, (sp, comments_at), state) = eat_nc(arena, state, err_made_progress)?;
+    if !sp.is_empty() && state.column() < min_indent {
+        return Err((ok_pr, indent_problem(start)));
     }
+    Ok((Loc::at(comments_at, sp), state))
 }
 
 fn begins_with_crlf(bytes: &[u8]) -> bool {
     bytes.len() >= 2 && bytes[0] == b'\r' && bytes[1] == b'\n'
 }
 
-pub fn spaces<'a, E>() -> impl Parser<'a, &'a [CommentOrNewline<'a>], E>
-where
-    E: 'a + SpaceProblem,
-{
-    move |arena, state: State<'a>, _min_indent: u32| {
-        let mut newlines = Vec::new_in(arena);
-
-        match consume_spaces(state, |_, space, _| newlines.push(space)) {
-            Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
-        }
-    }
-}
-
-pub fn loc_spaces<'a, E>() -> impl Parser<'a, &'a [Loc<CommentOrNewline<'a>>], E>
-where
-    E: 'a + SpaceProblem,
-{
-    move |arena, state: State<'a>, _min_indent: u32| {
-        let mut newlines = Vec::new_in(arena);
-
-        match consume_spaces(state, |start, space, end| {
-            newlines.push(Loc::at(Region::between(start, end), space))
-        }) {
-            Ok((progress, state)) => Ok((progress, newlines.into_bump_slice(), state)),
-            Err((progress, err)) => Err((progress, err)),
-        }
-    }
-}
-
-fn consume_spaces<'a, E, F>(
+// note: @dup of the eat_nc_locs
+#[allow(clippy::type_complexity)]
+pub fn eat_nc<'a, E>(
+    arena: &'a Bump,
     mut state: State<'a>,
-    mut on_space: F,
-) -> Result<(Progress, State<'a>), (Progress, E)>
+    err_made_progress: bool,
+) -> Result<(Progress, (&'a [CommentOrNewline<'a>], Region), State<'a>), (Progress, E)>
 where
     E: 'a + SpaceProblem,
-    F: FnMut(Position, CommentOrNewline<'a>, Position),
 {
-    let mut progress = NoProgress;
+    let mut nc = Vec::new_in(arena);
+    let mut p = NoProgress;
     let mut found_newline = state.is_at_start_of_file();
+    let mut comments_at = None;
     loop {
         let whitespace = fast_eat_whitespace(state.bytes());
         if whitespace > 0 {
-            state.advance_mut(whitespace);
-            progress = MadeProgress;
+            state.leap_mut(whitespace);
+            p = MadeProgress;
         }
 
         let start = state.pos();
-
         match state.bytes().first() {
             Some(b'#') => {
-                state.advance_mut(1);
+                state.inc_mut();
 
                 let is_doc_comment =
                     state.bytes().first() == Some(&b'#') && state.bytes().get(1) != Some(&b'#');
 
                 if is_doc_comment {
-                    state.advance_mut(1);
+                    state.inc_mut();
                     if state.bytes().first() == Some(&b' ') {
-                        state.advance_mut(1);
+                        state.inc_mut();
                     }
                 }
 
@@ -476,48 +290,50 @@ where
                 } else {
                     CommentOrNewline::LineComment(text)
                 };
-                state.advance_mut(len);
-                on_space(start, comment, state.pos());
+                state.leap_mut(len);
+                nc.push(comment);
                 found_newline = true;
 
+                comments_at = match comments_at {
+                    None => Some(Region::new(start, state.pos())),
+                    Some(r) => Some(Region::new(r.start(), state.pos())),
+                };
+
                 if begins_with_crlf(state.bytes()) {
-                    state.advance_mut(1);
-                    state = state.advance_newline();
+                    state = state.leap_newline(2);
                 } else if state.bytes().first() == Some(&b'\n') {
-                    state = state.advance_newline();
+                    state = state.leap_newline(1);
                 }
 
-                progress = MadeProgress;
+                p = MadeProgress;
             }
             Some(b'\r') => {
-                if state.bytes().get(1) == Some(&b'\n') {
-                    state.advance_mut(1);
-                    state = state.advance_newline();
-                    on_space(start, CommentOrNewline::Newline, state.pos());
-                    found_newline = true;
-                    progress = MadeProgress;
-                } else {
+                if state.bytes().get(1) != Some(&b'\n') {
                     return Err((
-                        progress,
+                        if err_made_progress { MadeProgress } else { p },
                         E::space_problem(BadInputError::HasMisplacedCarriageReturn, state.pos()),
                     ));
                 }
+                state = state.leap_newline(2);
+                nc.push(CommentOrNewline::Newline);
+                found_newline = true;
+                p = MadeProgress;
             }
             Some(b'\n') => {
-                state = state.advance_newline();
-                on_space(start, CommentOrNewline::Newline, state.pos());
+                state = state.leap_newline(1);
+                nc.push(CommentOrNewline::Newline);
                 found_newline = true;
-                progress = MadeProgress;
+                p = MadeProgress;
             }
             Some(b'\t') => {
                 return Err((
-                    progress,
+                    if err_made_progress { MadeProgress } else { p },
                     E::space_problem(BadInputError::HasTab, state.pos()),
                 ));
             }
             Some(x) if *x < b' ' => {
                 return Err((
-                    progress,
+                    if err_made_progress { MadeProgress } else { p },
                     E::space_problem(BadInputError::HasAsciiControl, state.pos()),
                 ));
             }
@@ -530,7 +346,110 @@ where
         }
     }
 
-    Ok((progress, state))
+    let comments_at = comments_at.unwrap_or(Region::point(state.pos()));
+    Ok((p, (nc.into_bump_slice(), comments_at), state))
+}
+
+#[inline(always)]
+pub fn require_newline_or_eof(arena: &Bump, state: &State<'_>, min_indent: u32) -> bool {
+    match eat_nc::<EExpr<'_>>(arena, state.clone(), false) {
+        Ok((_, (nl, _), state)) => {
+            (!nl.is_empty() && state.column() >= min_indent) || state.has_reached_end()
+        }
+        _ => false,
+    }
+}
+
+#[inline(always)]
+pub fn eat_nc_or_empty<'a>(
+    arena: &'a Bump,
+    state: State<'a>,
+    min_indent: u32,
+) -> (&'a [CommentOrNewline<'a>], State<'a>) {
+    match eat_nc_check(EExpr::Start, arena, state.clone(), min_indent, false) {
+        Ok((_, out, state)) => (out, state),
+        Err(_) => (&[] as &[_], state),
+    }
+}
+
+// note: @dup similar to `eat_nc` but without errors and progress
+pub fn eat_nc_locs<'a>(
+    arena: &'a Bump,
+    mut state: State<'a>,
+) -> Option<(&'a [Loc<CommentOrNewline<'a>>], State<'a>)> {
+    let mut nc = Vec::new_in(arena);
+    let mut found_newline = state.is_at_start_of_file();
+    loop {
+        let whitespace = fast_eat_whitespace(state.bytes());
+        if whitespace > 0 {
+            state.leap_mut(whitespace);
+        }
+
+        let start = state.pos();
+        match state.bytes().first() {
+            Some(b'#') => {
+                state.leap_mut(1);
+
+                let is_doc_comment =
+                    state.bytes().first() == Some(&b'#') && state.bytes().get(1) != Some(&b'#');
+
+                if is_doc_comment {
+                    state.leap_mut(1);
+                    if state.bytes().first() == Some(&b' ') {
+                        state.leap_mut(1);
+                    }
+                }
+
+                let len = fast_eat_until_control_character(state.bytes());
+
+                // We already checked that the string is valid UTF-8
+                debug_assert!(std::str::from_utf8(&state.bytes()[..len]).is_ok());
+                let text = unsafe { std::str::from_utf8_unchecked(&state.bytes()[..len]) };
+
+                let comment = if is_doc_comment {
+                    CommentOrNewline::DocComment(text)
+                } else {
+                    CommentOrNewline::LineComment(text)
+                };
+                state.leap_mut(len);
+                nc.push(state.loc(start, comment));
+                found_newline = true;
+
+                if begins_with_crlf(state.bytes()) {
+                    state = state.leap_newline(2);
+                } else if state.bytes().first() == Some(&b'\n') {
+                    state = state.leap_newline(1);
+                }
+            }
+            Some(b'\r') => {
+                if state.bytes().get(1) != Some(&b'\n') {
+                    return None;
+                }
+                state = state.leap_newline(2);
+                nc.push(state.loc(start, CommentOrNewline::Newline));
+                found_newline = true;
+            }
+            Some(b'\n') => {
+                state = state.leap_newline(1);
+                nc.push(state.loc(start, CommentOrNewline::Newline));
+                found_newline = true;
+            }
+            Some(b'\t') => {
+                return None;
+            }
+            Some(x) if *x < b' ' => {
+                return None;
+            }
+            _ => {
+                if found_newline {
+                    state = state.mark_current_indent();
+                }
+                break;
+            }
+        }
+    }
+
+    Some((nc.into_bump_slice(), state))
 }
 
 #[cfg(test)]

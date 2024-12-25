@@ -8,27 +8,26 @@ use crate::parser::SyntaxError;
 use crate::state::State;
 use bumpalo::Bump;
 use roc_region::all::Loc;
-use roc_region::all::Position;
 
 pub fn parse_expr_with<'a>(
     arena: &'a Bump,
     input: &'a str,
 ) -> Result<ast::Expr<'a>, SyntaxError<'a>> {
-    parse_loc_with(arena, input)
-        .map(|loc_expr| loc_expr.value)
-        .map_err(|e| e.problem)
+    let state = State::new(input.as_bytes());
+    match crate::expr::test_parse_expr(arena, state) {
+        Ok(loc_expr) => Ok(loc_expr.value),
+        Err(fail) => Err(fail),
+    }
 }
 
-#[allow(dead_code)]
 pub fn parse_loc_with<'a>(
     arena: &'a Bump,
     input: &'a str,
 ) -> Result<Loc<ast::Expr<'a>>, SourceError<'a, SyntaxError<'a>>> {
     let state = State::new(input.as_bytes());
-
-    match crate::expr::test_parse_expr(0, arena, state.clone()) {
+    match crate::expr::test_parse_expr(arena, state.clone()) {
         Ok(loc_expr) => Ok(loc_expr),
-        Err(fail) => Err(SyntaxError::Expr(fail, Position::default()).into_source_error(&state)),
+        Err(fail) => Err(fail.into_source_error(&state)),
     }
 }
 

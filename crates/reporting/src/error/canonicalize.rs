@@ -1562,7 +1562,7 @@ fn to_bad_ident_expr_report<'b>(
     use roc_parse::ident::BadIdent::*;
 
     match bad_ident {
-        Start(_) | Space(_, _) => unreachable!("these are handled in the parser"),
+        Start(_) => unreachable!("these are handled in the parser"),
         WeirdDotAccess(pos) | StrayDot(pos) => {
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
 
@@ -1792,7 +1792,7 @@ fn to_bad_ident_pattern_report<'b>(
     use roc_parse::ident::BadIdent::*;
 
     match bad_ident {
-        Start(_) | Space(_, _) => unreachable!("these are handled in the parser"),
+        Start(_) => unreachable!("these are handled in the parser"),
         WeirdDotAccess(pos) | StrayDot(pos) => {
             let region = LineColumnRegion::from_pos(lines.convert_pos(pos));
 
@@ -1888,7 +1888,7 @@ fn to_bad_ident_pattern_report<'b>(
         }
 
         UnderscoreInMiddle(pos) => {
-            let region = Region::from_pos(pos.sub(1));
+            let region = Region::from_pos(pos.prev());
 
             alloc.stack([
                 alloc.reflow("I am trying to parse a tag or opaque ref here:"),

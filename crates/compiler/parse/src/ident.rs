@@ -1,10 +1,12 @@
-use crate::ast::TryTarget;
+use crate::ast::{Spaced, TryTarget};
+use crate::keyword::is_keyword;
 use crate::parser::Progress::{self, *};
-use crate::parser::{BadInputError, EExpr, ParseResult, Parser};
+use crate::parser::{EExpr, ParseResult};
 use crate::state::State;
 use bumpalo::collections::vec::Vec;
 use bumpalo::Bump;
-use roc_region::all::{Position, Region};
+use encode_unicode::CharExt;
+use roc_region::all::{Loc, Position, Region};
 
 /// A tag, for example. Must start with an uppercase letter
 /// and then contain only letters and numbers afterwards - no dots allowed!
@@ -39,6 +41,8 @@ pub enum Ident<'a> {
     Tag(&'a str),
     /// @Foo or @Bar
     OpaqueRef(&'a str),
+    /// lowercase identifier, e.g. x, foo, or bar in \bar
+    Plain(&'a str),
     /// foo or foo.bar or Foo.Bar.baz.qux
     Access {
         module_name: &'a str,
@@ -56,50 +60,17 @@ pub enum Ident<'a> {
 ///
 /// * A record field, e.g. "email" in `.email` or in `email:`
 /// * A named pattern match, e.g. "foo" in `foo =` or `foo ->` or `\foo ->`
-pub fn lowercase_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_lowercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
-                Err((NoProgress, ()))
+#[inline(always)]
+pub fn parse_lowercase_ident(state: State<'_>) -> Result<(&str, State<'_>), Progress> {
+    match chomp_lowercase_part(state.bytes()) {
+        Ok((ident, may_be_kw)) => {
+            if may_be_kw && is_keyword(ident) {
+                Err(NoProgress)
             } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
+                Ok((ident, state.leap_len(ident)))
             }
         }
-    }
-}
-
-/// This is a tuple accessor, e.g. "1" in `.1`
-pub fn integer_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_integer_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident, state.advance(width)))
-        }
-    }
-}
-
-/// Like `lowercase_ident`, but returns an error with MadeProgress if the
-/// identifier is a keyword.
-pub fn lowercase_ident_keyword_e<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_lowercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
-                Err((MadeProgress, ()))
-            } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
-            }
-        }
-    }
-}
-
-pub fn tag_name<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |arena, state: State<'a>, min_indent: u32| {
-        uppercase_ident().parse(arena, state, min_indent)
+        Err(p) => Err(p),
     }
 }
 
@@ -108,107 +79,49 @@ pub fn tag_name<'a>() -> impl Parser<'a, &'a str, ()> {
 /// * A module name
 /// * A type name
 /// * A tag
-pub fn uppercase<'a>() -> impl Parser<'a, UppercaseIdent<'a>, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_uppercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
+#[inline(always)]
+pub fn uppercase(
+    state: State<'_>,
+) -> Result<(Loc<Spaced<UppercaseIdent<'_>>>, State<'_>), Progress> {
+    let start = state.pos();
+    match chomp_uppercase_part(state.bytes()) {
+        Err(p) => Err(p),
         Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident.into(), state.advance(width)))
+            let state = state.leap_len(ident);
+            let ident = state.loc(start, Spaced::Item(ident.into()));
+            Ok((ident, state))
         }
     }
 }
 
-/// This could be:
-///
-/// * A module name
-/// * A type name
-/// * A tag
-pub fn uppercase_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_uppercase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            let width = ident.len();
-            Ok((MadeProgress, ident, state.advance(width)))
-        }
-    }
-}
-
-pub fn unqualified_ident<'a>() -> impl Parser<'a, &'a str, ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_anycase_part(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok(ident) => {
-            if crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw) {
-                Err((MadeProgress, ()))
+#[inline(always)]
+pub fn parse_anycase_ident(state: State<'_>) -> Result<(&str, State<'_>), Progress> {
+    match chomp_anycase_part(state.bytes()) {
+        Err(p) => Err(p),
+        Ok((ident, may_be_kw)) => {
+            if may_be_kw && is_keyword(ident) {
+                Err(MadeProgress)
             } else {
-                let width = ident.len();
-                Ok((MadeProgress, ident, state.advance(width)))
+                Ok((ident, state.leap_len(ident)))
             }
         }
     }
 }
 
-macro_rules! advance_state {
-    ($state:expr, $n:expr) => {
-        Ok($state.advance($n))
-    };
-}
-
-pub fn parse_ident<'a>(
-    arena: &'a Bump,
-    state: State<'a>,
-    _min_indent: u32,
-) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
-    let initial = state.clone();
-
-    match chomp_identifier_chain(arena, state.bytes(), state.pos()) {
-        Ok((width, ident)) => {
-            let state = advance_state!(state, width as usize)?;
-            if let Ident::Access { module_name, parts } = ident {
-                if module_name.is_empty() {
-                    if let Some(first) = parts.first() {
-                        for keyword in crate::keyword::KEYWORDS.iter() {
-                            if first == &Accessor::RecordField(keyword) {
-                                return Err((NoProgress, EExpr::Start(initial.pos())));
-                            }
-                        }
-                    }
-                }
-
-                return Ok((MadeProgress, Ident::Access { module_name, parts }, state));
-            }
-
-            Ok((MadeProgress, ident, state))
-        }
-        Err((0, _)) => Err((NoProgress, EExpr::Start(state.pos()))),
-        Err((width, fail)) => match fail {
-            BadIdent::Start(pos) => Err((NoProgress, EExpr::Start(pos))),
-            BadIdent::Space(e, pos) => Err((NoProgress, EExpr::Space(e, pos))),
-            _ => malformed_identifier(
-                initial.bytes(),
-                fail,
-                advance_state!(state, width as usize)?,
-            ),
-        },
-    }
-}
-
-fn malformed_identifier<'a>(
+pub(crate) fn malformed_ident<'a>(
     initial_bytes: &'a [u8],
     problem: BadIdent,
-    mut state: State<'a>,
-) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
+    state: State<'a>,
+) -> (Ident<'a>, State<'a>) {
     let chomped = chomp_malformed(state.bytes());
     let delta = initial_bytes.len() - state.bytes().len();
     let parsed_str = unsafe { std::str::from_utf8_unchecked(&initial_bytes[..chomped + delta]) };
-
-    state = state.advance(chomped);
-
-    Ok((MadeProgress, Ident::Malformed(parsed_str, problem), state))
+    let ident = Ident::Malformed(parsed_str, problem);
+    (ident, state.leap(chomped))
 }
 
 /// skip forward to the next non-identifier character
 pub fn chomp_malformed(bytes: &[u8]) -> usize {
-    use encode_unicode::CharExt;
     let mut chomped = 0;
     while let Ok((ch, width)) = char::from_utf8_slice_start(&bytes[chomped..]) {
         // We can't use ch.is_alphanumeric() here because that passes for
@@ -220,14 +133,12 @@ pub fn chomp_malformed(bytes: &[u8]) -> usize {
             break;
         }
     }
-
     chomped
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BadIdent {
     Start(Position),
-    Space(BadInputError, Position),
 
     UnderscoreAlone(Position),
     UnderscoreInMiddle(Position),
@@ -248,105 +159,85 @@ pub enum BadIdent {
     QualifiedTupleAccessor(Position),
 }
 
-fn is_alnum(ch: char) -> bool {
-    ch.is_alphabetic() || ch.is_ascii_digit()
-}
-
-fn chomp_lowercase_part(buffer: &[u8]) -> Result<&str, Progress> {
-    chomp_part(
-        char::is_lowercase,
-        is_plausible_ident_continue,
-        true,
-        buffer,
-    )
-}
-
-fn chomp_uppercase_part(buffer: &[u8]) -> Result<&str, Progress> {
-    chomp_part(
-        char::is_uppercase,
-        is_plausible_ident_continue,
-        false,
-        buffer,
-    )
-}
-
-fn chomp_anycase_part(buffer: &[u8]) -> Result<&str, Progress> {
-    use encode_unicode::CharExt;
-
-    let allow_bang =
-        char::from_utf8_slice_start(buffer).map_or(false, |(leading, _)| leading.is_lowercase());
-
-    chomp_part(
-        char::is_alphabetic,
-        is_plausible_ident_continue,
-        allow_bang,
-        buffer,
-    )
-}
-
-fn chomp_integer_part(buffer: &[u8]) -> Result<&str, Progress> {
-    chomp_part(
-        |ch| char::is_ascii_digit(&ch),
-        |ch| char::is_ascii_digit(&ch),
-        false,
-        buffer,
-    )
-}
-
-fn is_plausible_ident_continue(ch: char) -> bool {
-    ch == '_' || is_alnum(ch)
-}
-
-#[inline(always)]
-fn chomp_part<F, G>(
-    leading_is_good: F,
-    rest_is_good: G,
-    allow_bang: bool,
-    buffer: &[u8],
-) -> Result<&str, Progress>
-where
-    F: Fn(char) -> bool,
-    G: Fn(char) -> bool,
-{
-    use encode_unicode::CharExt;
-
-    let mut chomped = 0;
-
-    if let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
-        if leading_is_good(ch) {
-            chomped += width;
-        } else {
-            return Err(NoProgress);
+pub(crate) fn chomp_lowercase_part(buffer: &[u8]) -> Result<(&str, bool), Progress> {
+    match char::from_utf8_slice_start(buffer) {
+        Ok((ch, mut chomped)) if ch.is_lowercase() => {
+            let mut may_be_kw = true;
+            while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
+                if ch == '_' || ch.is_alphabetic() || ch.is_ascii_digit() {
+                    chomped += width;
+                } else {
+                    if ch == '!' {
+                        chomped += width;
+                        may_be_kw = false;
+                    }
+                    break;
+                }
+            }
+            let name = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
+            Ok((name, may_be_kw))
         }
+        _ => Err(NoProgress),
     }
+}
 
-    while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
-        if rest_is_good(ch) {
-            chomped += width;
-        } else if allow_bang && ch == '!' {
-            chomped += width;
-            break;
-        } else {
-            // we're done
-            break;
+pub(crate) fn chomp_uppercase_part(buffer: &[u8]) -> Result<&str, Progress> {
+    match char::from_utf8_slice_start(buffer) {
+        Ok((ch, mut chomped)) if ch.is_uppercase() => {
+            while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
+                if ch == '_' || ch.is_alphabetic() || ch.is_ascii_digit() {
+                    chomped += width;
+                } else {
+                    break;
+                }
+            }
+            let name = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
+            Ok(name)
         }
+        _ => Err(NoProgress),
     }
+}
 
-    if let Ok((next, _width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
-        // This would mean we have e.g.:
-        // * identifier followed by a _
-        // * an integer followed by an alphabetic char
-        if is_plausible_ident_continue(next) {
-            return Err(NoProgress);
+pub(crate) fn chomp_anycase_part(buffer: &[u8]) -> Result<(&str, bool), Progress> {
+    match char::from_utf8_slice_start(buffer) {
+        Ok((ch, mut chomped)) if ch.is_alphabetic() => {
+            let is_lowercase = ch.is_lowercase();
+            let mut may_be_kw = is_lowercase;
+            while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
+                if ch == '_' || ch.is_alphabetic() || ch.is_ascii_digit() {
+                    chomped += width;
+                } else {
+                    if is_lowercase && ch == '!' {
+                        chomped += width;
+                        may_be_kw = false;
+                    }
+                    break;
+                }
+            }
+            let name = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
+            Ok((name, may_be_kw))
         }
+        _ => Err(NoProgress),
     }
+}
 
-    if chomped == 0 {
-        Err(NoProgress)
-    } else {
-        let name = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
-
-        Ok(name)
+pub(crate) fn chomp_integer_part(buffer: &[u8]) -> Result<&str, Progress> {
+    match char::from_utf8_slice_start(buffer) {
+        Ok((ch, mut chomped)) if ch.is_ascii_digit() => {
+            while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
+                if ch.is_ascii_digit() {
+                    chomped += width;
+                } else {
+                    if ch == '_' || ch.is_alphabetic() {
+                        return Err(NoProgress);
+                    }
+                    break;
+                }
+            }
+            let name = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
+            Ok(name)
+        }
+        _ => Err(NoProgress),
     }
 }
 
@@ -385,12 +276,9 @@ pub enum Suffix<'a> {
 /// a `.foo` or `.1` accessor function
 fn chomp_accessor(buffer: &[u8], pos: Position) -> Result<Accessor, BadIdent> {
     // assumes the leading `.` has been chomped already
-    use encode_unicode::CharExt;
-
     match chomp_lowercase_part(buffer) {
-        Ok(name) => {
+        Ok((name, _)) => {
             let chomped = name.len();
-
             if let Ok(('.', _)) = char::from_utf8_slice_start(&buffer[chomped..]) {
                 Err(BadIdent::WeirdAccessor(pos))
             } else {
@@ -401,7 +289,6 @@ fn chomp_accessor(buffer: &[u8], pos: Position) -> Result<Accessor, BadIdent> {
             match chomp_integer_part(buffer) {
                 Ok(name) => {
                     let chomped = name.len();
-
                     if let Ok(('.', _)) = char::from_utf8_slice_start(&buffer[chomped..]) {
                         Err(BadIdent::WeirdAccessor(pos))
                     } else {
@@ -421,7 +308,7 @@ fn chomp_accessor(buffer: &[u8], pos: Position) -> Result<Accessor, BadIdent> {
 fn chomp_record_updater(buffer: &[u8], pos: Position) -> Result<&str, BadIdent> {
     // assumes the leading `&` has been chomped already
     match chomp_lowercase_part(buffer) {
-        Ok(name) => Ok(name),
+        Ok((name, _)) => Ok(name),
         Err(_) => {
             // we've already made progress with the initial `&`
             Err(BadIdent::StrayAmpersand(pos.bump_column(1)))
@@ -433,16 +320,11 @@ fn chomp_record_updater(buffer: &[u8], pos: Position) -> Result<&str, BadIdent> 
 fn chomp_opaque_ref(buffer: &[u8], pos: Position) -> Result<&str, BadIdent> {
     // assumes the leading `@` has NOT been chomped already
     debug_assert_eq!(buffer.first(), Some(&b'@'));
-    use encode_unicode::CharExt;
-
-    let bad_ident = BadIdent::BadOpaqueRef;
-
     match chomp_uppercase_part(&buffer[1..]) {
         Ok(name) => {
             let width = 1 + name.len();
-
             if let Ok(('.', _)) = char::from_utf8_slice_start(&buffer[width..]) {
-                Err(bad_ident(pos.bump_column(width as u32)))
+                Err(BadIdent::BadOpaqueRef(pos.bump_offset(width)))
             } else {
                 let value = unsafe { std::str::from_utf8_unchecked(&buffer[..width]) };
                 if value.contains('_') {
@@ -455,158 +337,168 @@ fn chomp_opaque_ref(buffer: &[u8], pos: Position) -> Result<&str, BadIdent> {
                 }
             }
         }
-        Err(_) => Err(bad_ident(pos.bump_column(1))),
+        Err(_) => Err(BadIdent::BadOpaqueRef(pos.bump_column(1))),
     }
 }
 
-fn chomp_identifier_chain<'a>(
-    arena: &'a Bump,
-    buffer: &'a [u8],
-    pos: Position,
-) -> Result<(u32, Ident<'a>), (u32, BadIdent)> {
-    use encode_unicode::CharExt;
+/// This is a helper function for parsing function args.
+/// The rules for (-) are special-cased, and they come up in function args.
+///
+/// They work like this:
+///
+/// x - y  # "x minus y"
+/// x-y    # "x minus y"
+/// x- y   # "x minus y" (probably written in a rush)
+/// x -y   # "call x, passing (-y)"
+///
+/// Since operators have higher precedence than function application,
+/// any time we encounter a '-' it is unary if it is both preceded by spaces
+/// and is *not* followed by a whitespace character.
 
+/// When we parse an ident like `foo ` it could be any of these:
+///
+/// 1. A standalone variable with trailing whitespace (e.g. because an operator is next)
+/// 2. The beginning of a function call (e.g. `foo bar baz`)
+/// 3. The beginning of a definition (e.g. `foo =`)
+/// 4. The beginning of a type annotation (e.g. `foo :`)
+/// 5. A reserved keyword (e.g. `if ` or `when `), meaning we should do something else.
+pub fn parse_ident_chain<'a>(
+    arena: &'a Bump,
+    state: State<'a>,
+) -> ParseResult<'a, Ident<'a>, EExpr<'a>> {
+    let start = state.pos();
+    let bytes = state.bytes();
     let first_is_uppercase;
     let mut chomped = 0;
 
-    match char::from_utf8_slice_start(&buffer[chomped..]) {
+    // chomp the first character and depending on it decide on the rest
+    match char::from_utf8_slice_start(&bytes[chomped..]) {
         Ok((ch, width)) => match ch {
-            '.' => match chomp_accessor(&buffer[1..], pos) {
-                Ok(accessor) => {
-                    let bytes_parsed = 1 + accessor.len();
-                    return Ok((bytes_parsed as u32, Ident::AccessorFunction(accessor)));
+            '.' => {
+                return match chomp_accessor(&bytes[1..], start) {
+                    Ok(accessor) => {
+                        let state = state.leap(1 + accessor.len());
+                        Ok((Ident::AccessorFunction(accessor), state))
+                    }
+                    Err(fail) => Ok(malformed_ident(bytes, fail, state.inc())),
                 }
-                Err(fail) => return Err((1, fail)),
-            },
-            '&' => match chomp_record_updater(&buffer[1..], pos) {
-                Ok(updater) => {
-                    let bytes_parsed = 1 + updater.len();
-                    return Ok((bytes_parsed as u32, Ident::RecordUpdaterFunction(updater)));
+            }
+            '&' => {
+                return match chomp_record_updater(&bytes[1..], start) {
+                    Ok(updater) => {
+                        let state = state.leap(1 + updater.len());
+                        Ok((Ident::RecordUpdaterFunction(updater), state))
+                    }
+                    // return NoProgress to allow parsing &&
+                    Err(_) => Err((NoProgress, EExpr::Start(start))),
+                };
+            }
+            '@' => {
+                return match chomp_opaque_ref(bytes, start) {
+                    Ok(tagname) => {
+                        let state = state.leap(tagname.len());
+                        Ok((Ident::OpaqueRef(tagname), state))
+                    }
+                    Err(fail) => Ok(malformed_ident(bytes, fail, state.inc())),
                 }
-                // return 0 bytes consumed on failure to allow parsing &&
-                Err(fail) => return Err((0, fail)),
-            },
-            '@' => match chomp_opaque_ref(buffer, pos) {
-                Ok(tagname) => {
-                    let bytes_parsed = tagname.len();
-
-                    let ident = Ident::OpaqueRef;
-
-                    return Ok((bytes_parsed as u32, ident(tagname)));
-                }
-                Err(fail) => return Err((1, fail)),
-            },
+            }
             c if c.is_alphabetic() => {
                 // fall through
                 chomped += width;
                 first_is_uppercase = c.is_uppercase();
             }
-            _ => {
-                return Err((0, BadIdent::Start(pos)));
-            }
+            _ => return Err((NoProgress, EExpr::Start(start))),
         },
-        Err(_) => return Err((0, BadIdent::Start(pos))),
+        Err(_) => return Err((NoProgress, EExpr::Start(start))),
     }
 
-    while let Ok((ch, width)) = char::from_utf8_slice_start(&buffer[chomped..]) {
-        if ch.is_alphabetic() || ch.is_ascii_digit() || ch == '_' {
-            chomped += width;
-        } else if ch == '!' && !first_is_uppercase {
-            chomped += width;
-
-            let value = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
-            let ident = Ident::Access {
-                module_name: "",
-                parts: arena.alloc([Accessor::RecordField(value)]),
-            };
-
-            return Ok((chomped as u32, ident));
-        } else {
-            // we're done
-            break;
-        }
-    }
-
-    if let Ok(('.', _)) = char::from_utf8_slice_start(&buffer[chomped..]) {
-        let module_name = if first_is_uppercase {
-            match chomp_module_chain(&buffer[chomped..]) {
-                Ok(width) => {
-                    chomped += width as usize;
-                    unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) }
-                }
-                Err(MadeProgress) => todo!(),
-                Err(NoProgress) => unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) },
-            }
-        } else {
-            ""
-        };
-
-        let mut parts = Vec::with_capacity_in(4, arena);
-
-        if !first_is_uppercase {
-            let first_part = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
-            parts.push(Accessor::RecordField(first_part));
-        }
-
-        match chomp_access_chain(&buffer[chomped..], &mut parts) {
-            Ok(width) => {
-                if matches!(parts[0], Accessor::TupleIndex(_)) && first_is_uppercase {
-                    return Err((
-                        chomped as u32,
-                        BadIdent::QualifiedTupleAccessor(pos.bump_column(chomped as u32)),
-                    ));
-                }
-
-                chomped += width as usize;
-
-                let ident = Ident::Access {
-                    module_name,
-                    parts: parts.into_bump_slice(),
+    loop {
+        match char::from_utf8_slice_start(&bytes[chomped..]) {
+            Ok(('.', _)) => {
+                let module_name = if first_is_uppercase {
+                    match chomp_module_chain(&bytes[chomped..]) {
+                        Ok(width) => {
+                            chomped += width;
+                            unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) }
+                        }
+                        Err(MadeProgress) => todo!(), // todo: @ask this is original todo, can I write the test to expose it?
+                        Err(NoProgress) => unsafe {
+                            std::str::from_utf8_unchecked(&bytes[..chomped])
+                        },
+                    }
+                } else {
+                    ""
                 };
 
-                Ok((chomped as u32, ident))
+                let mut parts = Vec::with_capacity_in(4, arena);
+
+                if !first_is_uppercase {
+                    let first_part = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
+                    if module_name.is_empty() && is_keyword(first_part) {
+                        return Err((NoProgress, EExpr::Start(start)));
+                    }
+                    parts.push(Accessor::RecordField(first_part));
+                }
+
+                return match chomp_access_chain(&bytes[chomped..], &mut parts) {
+                    Ok(width) => {
+                        if first_is_uppercase && matches!(parts[0], Accessor::TupleIndex(_)) {
+                            let fail = BadIdent::QualifiedTupleAccessor(start.bump_offset(chomped));
+                            return Ok(malformed_ident(bytes, fail, state.leap(chomped)));
+                        }
+
+                        let parts = parts.into_bump_slice();
+                        let ident = Ident::Access { module_name, parts };
+                        Ok((ident, state.leap(chomped + width)))
+                    }
+                    Err(width) => {
+                        let fail = match width {
+                            0 if !module_name.is_empty() => {
+                                BadIdent::QualifiedTag(start.bump_offset(chomped))
+                            }
+                            1 if parts.is_empty() => {
+                                BadIdent::WeirdDotQualified(start.bump_offset(chomped + 1))
+                            }
+                            _ => BadIdent::WeirdDotAccess(start.bump_offset(chomped + width)),
+                        };
+                        return Ok(malformed_ident(bytes, fail, state.leap(chomped + width)));
+                    }
+                };
             }
-            Err(0) if !module_name.is_empty() => Err((
-                chomped as u32,
-                BadIdent::QualifiedTag(pos.bump_column(chomped as u32)),
-            )),
-            Err(1) if parts.is_empty() => Err((
-                chomped as u32 + 1,
-                BadIdent::WeirdDotQualified(pos.bump_column(chomped as u32 + 1)),
-            )),
-            Err(width) => Err((
-                chomped as u32 + width,
-                BadIdent::WeirdDotAccess(pos.bump_column(chomped as u32 + width)),
-            )),
+            Ok((ch, width)) if ch == '_' || ch.is_alphabetic() || ch.is_ascii_digit() => {
+                // continue the parsing loop
+                chomped += width;
+            }
+            other => {
+                let mut may_be_kw = !first_is_uppercase;
+                if !first_is_uppercase {
+                    if let Ok(('!', width)) = other {
+                        chomped += width;
+                        may_be_kw = false;
+                    }
+                }
+                let value = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
+                return if first_is_uppercase {
+                    if value.contains('_') {
+                        // we don't allow underscores in the middle of a tag identifier
+                        // but still parse them (and generate a malformed identifier)
+                        // to give good error messages for this case
+                        let fail = BadIdent::UnderscoreInMiddle(start.bump_offset(chomped));
+                        Ok(malformed_ident(bytes, fail, state.leap(chomped)))
+                    } else {
+                        Ok((Ident::Tag(value), state.leap(chomped)))
+                    }
+                } else if may_be_kw && is_keyword(value) {
+                    Err((NoProgress, EExpr::Start(start)))
+                } else {
+                    Ok((Ident::Plain(value), state.leap(chomped)))
+                };
+            }
         }
-    } else if first_is_uppercase {
-        // just one segment, starting with an uppercase letter; that's a tag
-        let value = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
-        if value.contains('_') {
-            // we don't allow underscores in the middle of a tag identifier
-            // but still parse them (and generate a malformed identifier)
-            // to give good error messages for this case
-            Err((
-                chomped as u32,
-                BadIdent::UnderscoreInMiddle(pos.bump_column(chomped as u32)),
-            ))
-        } else {
-            Ok((chomped as u32, Ident::Tag(value)))
-        }
-    } else {
-        // just one segment, starting with a lowercase letter; that's a normal identifier
-        let value = unsafe { std::str::from_utf8_unchecked(&buffer[..chomped]) };
-
-        let ident = Ident::Access {
-            module_name: "",
-            parts: arena.alloc([Accessor::RecordField(value)]),
-        };
-
-        Ok((chomped as u32, ident))
     }
 }
 
-fn chomp_module_chain(buffer: &[u8]) -> Result<u32, Progress> {
+fn chomp_module_chain(buffer: &[u8]) -> Result<usize, Progress> {
     let mut chomped = 0;
 
     while let Some(b'.') = buffer.get(chomped) {
@@ -625,28 +517,19 @@ fn chomp_module_chain(buffer: &[u8]) -> Result<u32, Progress> {
     if chomped == 0 {
         Err(NoProgress)
     } else {
-        Ok(chomped as u32)
-    }
-}
-
-pub fn concrete_type<'a>() -> impl Parser<'a, (&'a str, &'a str), ()> {
-    move |_, state: State<'a>, _min_indent: u32| match chomp_concrete_type(state.bytes()) {
-        Err(progress) => Err((progress, ())),
-        Ok((module_name, type_name, width)) => {
-            Ok((MadeProgress, (module_name, type_name), state.advance(width)))
-        }
+        Ok(chomped)
     }
 }
 
 // parse a type name like `Result` or `Result.Result`
-fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
+pub(crate) fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
     let first = crate::ident::chomp_uppercase_part(buffer)?;
 
     if let Some(b'.') = buffer.get(first.len()) {
         match crate::ident::chomp_module_chain(&buffer[first.len()..]) {
             Err(_) => Err(MadeProgress),
             Ok(rest) => {
-                let width = first.len() + rest as usize;
+                let width = first.len() + rest;
 
                 // we must explicitly check here for a trailing `.`
                 if let Some(b'.') = buffer.get(width) {
@@ -662,7 +545,6 @@ fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
                         let module_name =
                             unsafe { std::str::from_utf8_unchecked(&slice[..index - 1]) };
                         let type_name = unsafe { std::str::from_utf8_unchecked(&slice[index..]) };
-
                         Ok((module_name, type_name, width))
                     }
                 }
@@ -673,44 +555,38 @@ fn chomp_concrete_type(buffer: &[u8]) -> Result<(&str, &str, usize), Progress> {
     }
 }
 
-fn chomp_access_chain<'a>(buffer: &'a [u8], parts: &mut Vec<'a, Accessor<'a>>) -> Result<u32, u32> {
+pub(crate) fn chomp_access_chain<'a>(
+    buffer: &'a [u8],
+    parts: &mut Vec<'a, Accessor<'a>>,
+) -> Result<usize, usize> {
     let mut chomped = 0;
-
     while let Some(b'.') = buffer.get(chomped) {
-        match &buffer.get(chomped + 1..) {
+        let next = chomped + 1;
+        match &buffer.get(next..) {
             Some(slice) => match chomp_lowercase_part(slice) {
-                Ok(name) => {
-                    let value = unsafe {
-                        std::str::from_utf8_unchecked(
-                            &buffer[chomped + 1..chomped + 1 + name.len()],
-                        )
-                    };
+                Ok((name, _)) => {
+                    chomped = next + name.len();
+                    let value = unsafe { std::str::from_utf8_unchecked(&buffer[next..chomped]) };
                     parts.push(Accessor::RecordField(value));
-
-                    chomped += name.len() + 1;
                 }
                 Err(_) => match chomp_integer_part(slice) {
                     Ok(name) => {
-                        let value = unsafe {
-                            std::str::from_utf8_unchecked(
-                                &buffer[chomped + 1..chomped + 1 + name.len()],
-                            )
-                        };
+                        chomped = next + name.len();
+                        let value =
+                            unsafe { std::str::from_utf8_unchecked(&buffer[next..chomped]) };
                         parts.push(Accessor::TupleIndex(value));
-
-                        chomped += name.len() + 1;
                     }
-                    Err(_) => return Err(chomped as u32 + 1),
+                    Err(_) => return Err(next),
                 },
             },
-            None => return Err(chomped as u32 + 1),
+            None => return Err(next),
         }
     }
 
     if chomped == 0 {
         Err(0)
     } else {
-        Ok(chomped as u32)
+        Ok(chomped)
     }
 }
 
@@ -720,7 +596,7 @@ mod tests {
 
     fn assert_ident_parses<'a>(arena: &'a Bump, ident: &str, expected: Ident<'a>) {
         let s = State::new(ident.as_bytes());
-        let (_, id, _) = parse_ident(arena, s, 0).unwrap();
+        let (id, _) = parse_ident_chain(arena, s).unwrap();
         assert_eq!(id, expected);
     }
 
@@ -731,14 +607,7 @@ mod tests {
         assert_ident_parses(arena, ident, Ident::OpaqueRef(ident));
     }
     fn assert_ident_parses_simple_access(arena: &Bump, ident: &str) {
-        assert_ident_parses(
-            arena,
-            ident,
-            Ident::Access {
-                module_name: "",
-                parts: arena.alloc([Accessor::RecordField(ident)]),
-            },
-        );
+        assert_ident_parses(arena, ident, Ident::Plain(ident));
     }
 
     fn assert_ident_parses_malformed(arena: &Bump, ident: &str, pos: Position) {

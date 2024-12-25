@@ -21,6 +21,7 @@ use roc_parse::ast::{
     ModuleImport, ModuleImportParams, Pattern, Spaceable, Spaces, SpacesAfter, SpacesBefore,
     StrLiteral, TypeAnnotation, TypeDef, TypeHeader, ValueDef,
 };
+use roc_parse::blankspace::SpacedBuilder;
 use roc_parse::expr::merge_spaces;
 use roc_parse::header::Keyword;
 use roc_region::all::Loc;
@@ -104,7 +105,7 @@ where
     let spaces = item.extract_spaces();
 
     SpacesAfter {
-        item: spaces.item.maybe_before(arena, spaces.before),
+        item: spaces.item.spaced_before(arena, spaces.before),
         after: spaces.after,
     }
 }

@@ -9,10 +9,8 @@ use roc_error_macros::set_panic_not_exit;
 use roc_fmt::{annotation::Formattable, header::fmt_header, MigrationFlags};
 use roc_module::ident::QualifiedModuleName;
 use roc_module::symbol::{IdentIds, Interns, ModuleIds, PackageModuleIds, Symbol};
-use roc_parse::ast::RecursiveValueDefIter;
-use roc_parse::ast::ValueDef;
+use roc_parse::ast::{RecursiveValueDefIter, ValueDef};
 use roc_parse::header::parse_module_defs;
-use roc_parse::parser::Parser;
 use roc_parse::parser::SyntaxError;
 use roc_parse::state::State;
 use roc_parse::test_helpers::parse_loc_with;
@@ -150,7 +148,6 @@ impl<'a> Output<'a> {
             Output::Expr(loc_expr) => {
                 let mut var_store = VarStore::default();
                 let mut imported: Vec<(QualifiedModuleName, Region)> = vec![];
-
                 let empty_defs = Defs::default();
                 let mut it = RecursiveValueDefIter::new(&empty_defs);
                 it.push_pending_from_expr(&loc_expr.value);
@@ -163,7 +160,6 @@ impl<'a> Output<'a> {
                 let mut module_ids = ModuleIds::default();
                 let mut qualified_module_ids = PackageModuleIds::default();
                 let mut dep_idents = IdentIds::exposed_builtins(0);
-
                 // Make sure the module_ids has ModuleIds for all our deps,
                 // then record those ModuleIds in can_module_ids for later.
                 // For each of our imports, add an entry to deps_by_name
@@ -176,7 +172,6 @@ impl<'a> Output<'a> {
                     let module_id = qualified_module_ids.get_or_insert(&pq_module_name);
                     dep_idents.get_or_insert(module_id);
                 }
-
                 let home = module_ids.get_or_insert(&"Test".into());
 
                 let mut scope = Scope::new(
@@ -290,9 +285,7 @@ impl<'a> Input<'a> {
             Input::Full(input) => {
                 let state = State::new(input.as_bytes());
 
-                let min_indent = 0;
-                let (_, header, state) = roc_parse::header::header()
-                    .parse(arena, state.clone(), min_indent)
+                let (header, state) = roc_parse::header::header(arena, state.clone())
                     .map_err(|(_, fail)| SyntaxError::Header(fail))?;
 
                 let (new_header, defs) = header.item.upgrade_header_imports(arena);

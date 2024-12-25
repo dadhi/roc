@@ -1,5 +1,5 @@
 use crate::ast::Base;
-use crate::parser::{ENumber, ParseResult, Parser, Progress};
+use crate::parser::{ENumber, ParseResult, Progress};
 use crate::state::State;
 
 pub enum NumLiteral<'a> {
@@ -12,39 +12,7 @@ pub enum NumLiteral<'a> {
     },
 }
 
-pub fn positive_number_literal<'a>() -> impl Parser<'a, NumLiteral<'a>, ENumber> {
-    move |_arena, state: State<'a>, _min_indent: u32| {
-        match state.bytes().first() {
-            Some(first_byte) if (*first_byte as char).is_ascii_digit() => {
-                parse_number_base(false, state.bytes(), state)
-            }
-            _ => {
-                // this is not a number at all
-                Err((Progress::NoProgress, ENumber::End))
-            }
-        }
-    }
-}
-
-pub fn number_literal<'a>() -> impl Parser<'a, NumLiteral<'a>, ENumber> {
-    move |_arena, state: State<'a>, _min_indent: u32| {
-        match state.bytes().first() {
-            Some(first_byte) if *first_byte == b'-' => {
-                // drop the minus
-                parse_number_base(true, &state.bytes()[1..], state)
-            }
-            Some(first_byte) if (*first_byte as char).is_ascii_digit() => {
-                parse_number_base(false, state.bytes(), state)
-            }
-            _ => {
-                // this is not a number at all
-                Err((Progress::NoProgress, ENumber::End))
-            }
-        }
-    }
-}
-
-fn parse_number_base<'a>(
+pub fn parse_number_base<'a>(
     is_negated: bool,
     bytes: &'a [u8],
     state: State<'a>,
@@ -63,21 +31,17 @@ fn chomp_number_base<'a>(
     bytes: &'a [u8],
     state: State<'a>,
 ) -> ParseResult<'a, NumLiteral<'a>, ENumber> {
-    let (_is_float, chomped) = chomp_number(bytes);
+    let (_, chomped) = chomp_number(bytes);
 
     let string = unsafe { std::str::from_utf8_unchecked(&bytes[..chomped]) };
 
-    let new = state.advance(chomped + 2 + is_negative as usize);
-
-    Ok((
-        Progress::MadeProgress,
-        NumLiteral::NonBase10Int {
-            is_negative,
-            string,
-            base,
-        },
-        new,
-    ))
+    let state = state.leap(chomped + 2 + is_negative as usize);
+    let literal = NumLiteral::NonBase10Int {
+        is_negative,
+        string,
+        base,
+    };
+    Ok((literal, state))
 }
 
 fn chomp_number_dec<'a>(
@@ -100,17 +64,14 @@ fn chomp_number_dec<'a>(
     let string =
         unsafe { std::str::from_utf8_unchecked(&state.bytes()[0..chomped + is_negative as usize]) };
 
-    let new = state.advance(chomped + is_negative as usize);
+    let state = state.leap(chomped + is_negative as usize);
 
-    Ok((
-        Progress::MadeProgress,
-        if is_float {
-            NumLiteral::Float(string)
-        } else {
-            NumLiteral::Num(string)
-        },
-        new,
-    ))
+    let literal = if is_float {
+        NumLiteral::Float(string)
+    } else {
+        NumLiteral::Num(string)
+    };
+    Ok((literal, state))
 }
 
 fn chomp_number(mut bytes: &[u8]) -> (bool, usize) {

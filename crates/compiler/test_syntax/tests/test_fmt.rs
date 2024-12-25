@@ -1224,6 +1224,43 @@ mod test_fmt {
         ));
     }
 
+    // todo: @wip in the main branch this will result in the double indent for the empty string parameter of the `i`
+    #[test]
+    fn multiline_str_crazyness() {
+        expr_formats_to(
+            indoc!(
+                r#"
+                """""""$(i"""""")"
+                "#
+            ),
+            indoc!(
+                r#"
+                """
+                """
+                    "$(i
+                        """
+                        """)"
+                "#
+            ),
+        );
+    }
+
+    #[test]
+    fn dbg_bang_neg_bang_if_bang() {
+        expr_formats_to(
+            indoc!(
+                r#"
+                dbg!-!if!
+                "#
+            ),
+            indoc!(
+                r#"
+                dbg ! -(!if!)
+                "#
+            ),
+        );
+    }
+
     #[test]
     fn zero() {
         expr_formats_same(indoc!(
@@ -1258,6 +1295,24 @@ mod test_fmt {
             1_23_456.7_89_10
             "
         ));
+    }
+
+    #[test]
+    fn underscore_expr_in_def() {
+        expr_formats_to(
+            indoc!(
+                r"
+            J:R
+            n_p
+            "
+            ),
+            indoc!(
+                r"
+            J : R
+            n_p
+            "
+            ),
+        );
     }
 
     #[test]
@@ -4508,6 +4563,30 @@ mod test_fmt {
         ));
     }
 
+    #[test]
+    fn apply_binop_switch() {
+        expr_formats_same(indoc!(
+            r"
+            i < 2
+            -6
+            "
+        ));
+        expr_formats_to(
+            indoc!(
+                r"
+            i<2
+            (-6)
+            "
+            ),
+            indoc!(
+                r"
+            i < 2
+            -6
+            "
+            ),
+        );
+    }
+
     // UNARY OP
 
     #[test]
@@ -4664,7 +4743,391 @@ mod test_fmt {
     }
 
     #[test]
-    fn pipline_op_with_apply() {
+    fn func_call_trailing_lambda_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \x -> x |> Num.add 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_pizza_shortcut() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \|> Num.add 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_plus_shortcut() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \+ 1
+                list
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \< 1
+                list
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [1, 2, 3] \> 1
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_lambda_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [{ foo: 1 }] .foo
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn func_call_trailing_closure_shortcut_field_access() {
+        expr_formats_same(indoc!(
+            r"
+                list = List.map [{ foo: 1 }] \.foo
+                list
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_with_pipe() {
+        expr_formats_same(indoc!(
+            r"
+                \x42 -> x42 |> Num.add 1
+            "
+        ));
+    }
+    #[test]
+    fn simple_closure_with_pipe_no_spaces() {
+        expr_formats_to(
+            indoc!(
+                r"
+                \x42->x42 |> Num.add 1
+            "
+            ),
+            indoc!(
+                r"
+                \x42 -> x42 |> Num.add 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn simple_closure_shortcut_pizza_pipe() {
+        expr_formats_same(indoc!(
+            r"
+            \|> Num.add 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_shortcut_pizza_pipe_right_on_the_newline() {
+        expr_formats_same(indoc!(
+            r"
+            \|>
+                Num.add 1
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_pizza_pipe_right_on_the_newline() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \x -> x |>
+                Num.add 1
+            "
+            ),
+            indoc!(
+                r"
+            \x -> x
+                |>
+                Num.add 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn simple_closure_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo
+            f
+            "
+        ));
+    }
+
+    // todo: @ask it is not implemented but successfully parses, hmm..
+    #[test]
+    fn simple_closure_nested_field_accessor() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo.bar
+            f
+            "
+        ));
+    }
+
+    // todo: @ask it is not implemented but successfully parses, hmm..
+    #[test]
+    fn simple_closure_nested_field_accessor_plus_one() {
+        expr_formats_same(indoc!(
+            r"
+            f = .foo.bar + 1
+            f
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_type_def() {
+        expr_formats_same(indoc!(
+            r"
+            truex : Boolex
+            truex = @Boolex Falsex
+            truex
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_field_access() {
+        expr_formats_same(indoc!(
+            r"
+            \nu -> nu.foo
+            "
+        ));
+    }
+
+    #[test]
+    fn simple_closure_field_access_chain() {
+        expr_formats_same(indoc!(
+            r"
+            \nu -> nu.foo.bar.buz
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_field_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.foo
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_tuple_index_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.0
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            \-.0
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            \!.0
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_tuple_index_access_fmt_expand() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \ .
+            "
+            ),
+            indoc!(
+                r"
+            \x -> x
+            "
+            ),
+        );
+        expr_formats_to(
+            indoc!(
+                r"
+            \ .0
+            "
+            ),
+            indoc!(
+                r"
+            \x -> x.0
+            "
+            ),
+        );
+        expr_formats_to(
+            indoc!(
+                r"
+            \ -.0
+            "
+            ),
+            indoc!(
+                r"
+            \x -> -x.0
+            "
+            ),
+        );
+        expr_formats_to(
+            indoc!(
+                r"
+            \ !.0
+            "
+            ),
+            indoc!(
+                r"
+            \x -> !x.0
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_shortcut_for_field_tuple_index_access() {
+        expr_formats_same(indoc!(
+            r"
+            \.bru.0
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            \!.bru.0
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            \-.bru.0
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_field_as_part_of_bin_op() {
+        expr_formats_same(indoc!(
+            r"
+            \.foo.bar + 1
+            "
+        ));
+        expr_formats_same(indoc!(
+            r"
+            \-.foo.bar + 1
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_field_as_part_of_bin_op_fmt_expand() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \ .foo + 1
+            "
+            ),
+            indoc!(
+                r"
+            \x -> x.foo + 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_shortcut_for_unary_minus_field_as_part_of_bin_op_fmt_expand() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \ -.foo + 1
+            "
+            ),
+            indoc!(
+                r"
+            \x -> (-x.foo) + 1
+            "
+            ),
+        );
+        // for the reference
+        expr_formats_to(
+            indoc!(
+                r"
+            \x -> -x.foo + 1
+            "
+            ),
+            indoc!(
+                r"
+            \x -> (-x.foo) + 1
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_shortcut_for_field_space_format() {
+        expr_formats_to(
+            indoc!(
+                r"
+                \ .foo
+                "
+            ),
+            indoc!(
+                r"
+                \x -> x.foo
+                "
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_shortcut_for_identity_function() {
+        expr_formats_same(indoc!(
+            r"
+            \.
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_identity_function_format() {
+        expr_formats_to(
+            indoc!(
+                r"
+            \ .
+            "
+            ),
+            indoc!(
+                r"
+            \x -> x
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn pipeline_op_with_apply() {
         expr_formats_same(indoc!(
             r"
             output
@@ -4684,8 +5147,16 @@ mod test_fmt {
                     i + length)
             "
         ));
+        expr_formats_same(indoc!(
+            r"
+            List.map
+                xs
+                (\+ length)
+            "
+        ));
     }
 
+    // 'pipline' looks interesting :)
     #[test]
     fn pipline_apply_lambda_1() {
         expr_formats_same(indoc!(
@@ -4694,6 +5165,13 @@ mod test_fmt {
             |> List.map
                 xs
                 (\i -> i)
+            "
+        ));
+
+        expr_formats_same(indoc!(
+            r"
+            shout
+            |> List.map xs \.
             "
         ));
     }
@@ -4709,6 +5187,59 @@ mod test_fmt {
             |> List.join
             "
         ));
+        expr_formats_same(indoc!(
+            r"
+            shout
+            |> List.map
+                xs
+                \.
+            |> List.join
+            "
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_unary_minus() {
+        expr_formats_same(indoc!(
+            r"
+            \-.
+            "
+        ));
+
+        expr_formats_to(
+            indoc!(
+                r"
+            \ -.
+            "
+            ),
+            indoc!(
+                r"
+            \x -> -x
+            "
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_shortcut_for_unary_negate() {
+        expr_formats_same(indoc!(
+            r"
+            \!.
+            "
+        ));
+
+        expr_formats_to(
+            indoc!(
+                r"
+            \ !.
+            "
+            ),
+            indoc!(
+                r"
+            \x -> !x
+            "
+            ),
+        );
     }
 
     #[test]
@@ -4731,6 +5262,23 @@ mod test_fmt {
                 example = \model ->
                     model
                     |> withModel
+                        (\result ->
+                            when result is
+                                Err _ ->
+                                    Err {}
+
+                                Ok val ->
+                                    Ok {}
+                        )
+
+                example
+            "
+        ));
+
+        expr_formats_same(indoc!(
+            r"
+                example = \|>
+                    withModel
                         (\result ->
                             when result is
                                 Err _ ->
@@ -4778,6 +5326,58 @@ mod test_fmt {
 
                     example
                 "
+            ),
+        );
+    }
+
+    #[test]
+    fn pipeline_apply_lambda_multiline_with_closure_shortcuts() {
+        expr_formats_same(indoc!(
+            r"
+                    example = \|> withModel
+                        (\~
+                            Err _ ->
+                                Err {}
+
+                            Ok val ->
+                                Ok {}
+                        )
+                    example
+                "
+        ));
+    }
+
+    #[test]
+    fn pipeline_apply_lambda_multiline_with_closure_shortcuts_expansion() {
+        expr_formats_to(
+            indoc!(
+                r"
+                    example = \ |> withModel
+                        (\ ~
+                            Err _ ->
+                                Err {}
+
+                            Ok val ->
+                                Ok {}
+                        )
+                    example
+                "
+            ),
+            // it is fine to have the same names for the nested lambda arguments,
+            // because they are supposed to be changed by the user one at a time.
+            indoc!(
+                r"
+                example = \x -> x
+                    |> withModel
+                        (\x -> x ~
+                            Err _ ->
+                                Err {}
+
+                            Ok val ->
+                                Ok {}
+                        )
+                example
+            "
             ),
         );
     }
@@ -5780,8 +6380,259 @@ mod test_fmt {
             r#"
             when foo is
                 "abc" -> ""
+                _ -> "abc"
             "#
         ));
+    }
+
+    #[test]
+    fn single_line_string_literal_in_pattern_with_comment_before_when() {
+        expr_formats_same(indoc!(
+            r#"
+            # Comment X
+            when foo is
+                "abc" -> ""
+                _ -> "abc"
+            "#
+        ));
+    }
+
+    #[test]
+    fn basic_pattern_binop() {
+        expr_formats_same(indoc!(
+            r#"
+            foo ~
+                "abc" -> ""
+                _ -> "abc"
+            "#
+        ));
+    }
+
+    #[test]
+    fn pattern_binop_with_comment_before_cond() {
+        expr_formats_same(indoc!(
+            r#"
+            # Comment Y
+            foo ~
+                "abc" -> ""
+                _ -> "abc"
+            "#
+        ));
+    }
+
+    #[test]
+    fn pattern_binop_with_operator_chain_equivalents() {
+        expr_formats_same(indoc!(
+            r#"
+            a + b + c ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+        expr_formats_same(indoc!(
+            r#"
+            (a + b + c) ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_for_when_binop() {
+        expr_formats_same(indoc!(
+            r#"
+            \~
+                "abc" -> ""
+                _ -> "abc"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_binop_with_when_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \+ 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_id_binop_with_when_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \. + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+
+        expr_formats_to(
+            indoc!(
+                r#"
+            \ . + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x -> x + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_for_when_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \x -> x + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_for_when_binop_with_cond_in_parens() {
+        expr_formats_same(indoc!(
+            r#"
+            \x -> (x + 5) ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_access_with_when_binop() {
+        expr_formats_same(indoc!(
+            r#"
+            \.foo ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_unary_access_with_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \-.foo.bar + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+    }
+
+    #[test]
+    fn closure_shortcut_unary_access_with_when_binop_chain() {
+        expr_formats_same(indoc!(
+            r#"
+            \-.foo + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+        ));
+        expr_formats_to(
+            indoc!(
+                r#"
+            \ -.foo + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x -> (-x.foo) + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+        );
+
+        // for the reference
+        expr_formats_to(
+            indoc!(
+                r#"
+            \x -> -x.foo + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x -> (-x.foo) + 5 ~
+                42 -> ""
+                _ -> "42"
+            "#
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_with_when_binop() {
+        expr_formats_to(
+            indoc!(
+                r#"
+            \x -> x ~
+                """
+                abc
+                """ ->
+                    """
+                    xyz
+                    """
+                _ -> "abc"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x -> x ~
+                "abc" ->
+                    "xyz"
+
+                _ -> "abc"
+            "#
+            ),
+        );
+    }
+
+    #[test]
+    fn closure_of_statements_with_when_binop() {
+        expr_formats_to(
+            indoc!(
+                r#"
+            \x ->
+                # Hey!
+                x ~
+                    """
+                    abc
+                    """ ->
+                        """
+                        xyz
+                        """
+                    _ -> "abc"
+            "#
+            ),
+            indoc!(
+                r#"
+            \x ->
+                # Hey!
+                x ~
+                    "abc" ->
+                        "xyz"
+
+                    _ -> "abc"
+            "#
+            ),
+        );
     }
 
     #[test]
@@ -6131,7 +6982,7 @@ mod test_fmt {
         );
     }
 
-    #[test]
+    #[test] // todo: @wip debug me to see how statements are converted into the definitions and the result expression
     fn preserve_annotated_body() {
         expr_formats_same(indoc!(
             r"

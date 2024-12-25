@@ -626,7 +626,9 @@ fn canonicalize_claimed_ability_impl<'a>(
         }
         AssignedField::RequiredValue(label, _spaces, value) => {
             let impl_ident = match value.value {
-                ast::Expr::Var { module_name, ident } => {
+                ast::Expr::Var {
+                    module_name, ident, ..
+                } => {
                     if module_name.is_empty() {
                         ident
                     } else {
@@ -2576,7 +2578,7 @@ fn canonicalize_pending_body<'a>(
                     ident: defined_symbol,
                     ..
                 },
-                ast::Expr::Closure(arguments, body),
+                ast::Expr::Closure(arguments, body, _),
             ) => {
                 // bookkeeping for tail-call detection.
                 let outer_tailcallable = env.tailcallable_symbol;

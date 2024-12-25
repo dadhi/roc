@@ -1,7 +1,5 @@
-use roc_region::all::{Position, Region};
+use roc_region::all::{Loc, Position, Region};
 use std::fmt;
-
-use crate::parser::Progress;
 
 /// A position in a source file.
 // NB: [Copy] is explicitly NOT derived to reduce the chance of bugs due to accidentally re-using
@@ -45,63 +43,54 @@ impl<'a> State<'a> {
     }
 
     pub fn column(&self) -> u32 {
-        self.pos().offset - self.line_start.offset
+        self.offset as u32 - self.line_start.offset
     }
 
     pub fn line_indent(&self) -> u32 {
         self.line_start_after_whitespace.offset - self.line_start.offset
     }
 
-    /// Check that the indent is at least `indent` spaces.
-    /// Return a new indent if the current indent is greater than `indent`.
-    pub fn check_indent<E>(
-        &self,
-        indent: u32,
-        e: impl Fn(Position) -> E,
-    ) -> Result<u32, (Progress, E)> {
-        if self.column() < indent {
-            Err((Progress::NoProgress, e(self.pos())))
-        } else {
-            Ok(std::cmp::max(indent, self.line_indent()))
-        }
-    }
-
     /// Mutably advance the state by a given offset
     #[inline(always)]
-    pub(crate) fn advance_mut(&mut self, offset: usize) {
+    pub(crate) fn leap_mut(&mut self, offset: usize) {
         self.offset += offset;
-    }
-
-    /// If the next `text.len()` bytes of the input match the provided `text`,
-    /// mutably advance the state by that much.
-    #[inline(always)]
-    pub(crate) fn consume_mut(&mut self, text: &str) -> bool {
-        let found = self.bytes().starts_with(text.as_bytes());
-
-        if found {
-            self.advance_mut(text.len());
-        }
-
-        found
     }
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance(mut self, offset: usize) -> State<'a> {
+    pub(crate) const fn leap(mut self, offset: usize) -> State<'a> {
         self.offset += offset;
         self
     }
 
     #[must_use]
     #[inline(always)]
-    pub(crate) const fn advance_newline(mut self) -> State<'a> {
+    pub(crate) const fn leap_len(mut self, str: &str) -> State<'a> {
+        self.offset += str.len();
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub(crate) const fn inc(mut self) -> State<'a> {
         self.offset += 1;
+        self
+    }
+
+    #[inline(always)]
+    pub(crate) fn inc_mut(&mut self) {
+        self.offset += 1;
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub(crate) const fn leap_newline(mut self, offset: usize) -> State<'a> {
+        self.offset += offset;
         self.line_start = self.pos();
 
         // WARNING! COULD CAUSE BUGS IF WE FORGET TO CALL mark_current_indent LATER!
         // We really need to be stricter about this.
         self.line_start_after_whitespace = self.line_start;
-
         self
     }
 
@@ -132,6 +121,13 @@ impl<'a> State<'a> {
 
     pub fn is_at_start_of_file(&self) -> bool {
         self.offset == 0
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn loc<T>(&self, start: Position, value: T) -> Loc<T> {
+        let region = Region::new(start, self.pos());
+        Loc { region, value }
     }
 }
 

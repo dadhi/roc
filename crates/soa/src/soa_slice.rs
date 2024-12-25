@@ -107,6 +107,14 @@ impl<T> Slice<T> {
         }
     }
 
+    pub const fn point(start: usize) -> Self {
+        Self {
+            start: start as u32,
+            length: 0,
+            _marker: PhantomData,
+        }
+    }
+
     pub const fn truncate(&self, length: u16) -> Self {
         Self {
             start: self.start,

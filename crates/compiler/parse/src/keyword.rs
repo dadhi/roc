@@ -21,6 +21,18 @@ pub const WHERE: &str = "where";
 // These keywords are valid in headers
 pub const PLATFORM: &str = "platform";
 
+// List of keywords in expressions
 pub const KEYWORDS: [&str; 11] = [
     IF, THEN, ELSE, WHEN, AS, IS, DBG, IMPORT, EXPECT, RETURN, CRASH,
 ];
+
+pub const KEYWORD_MIN_LEN: usize = IF.len();
+pub const KEYWORD_MAX_LEN: usize = EXPECT.len();
+
+// todo: @perf can we do better, fixed match table or the ideal hash map, benchmark it?
+#[inline(always)]
+pub(crate) fn is_keyword(ident: &str) -> bool {
+    ident.len() >= KEYWORD_MIN_LEN
+        && ident.len() <= KEYWORD_MAX_LEN
+        && crate::keyword::KEYWORDS.iter().any(|kw| &ident == kw)
+}

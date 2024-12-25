@@ -1,9 +1,9 @@
 use bumpalo::Bump;
 use roc_parse::{
     ast,
-    blankspace::space0_before_optional_after,
-    expr::{expr_end, loc_expr_block},
-    parser::{skip_second, EExpr, Parser, SourceError, SyntaxError},
+    blankspace::{eat_nc, eat_nc_or_empty, SpacedBuilder},
+    expr::{parse_expr_block, ACCEPT_MULTI_BACKPASSING, CHECK_FOR_ARROW},
+    parser::{SourceError, SyntaxError},
     state::State,
 };
 use roc_region::all::{Loc, Position};
@@ -36,22 +36,25 @@ impl ParseExpr {
         let original_bytes = trim_and_deindent(&self.arena, input).as_bytes();
         let state = State::new(original_bytes);
 
-        let parser = skip_second(
-            space0_before_optional_after(
-                loc_expr_block(true),
-                EExpr::IndentStart,
-                EExpr::IndentEnd,
-            ),
-            expr_end(),
-        );
+        let arena = &self.arena;
+        let out = match eat_nc(arena, state, false) {
+            Err((_, fail)) => Err(fail),
+            Ok((_, (spaces_before, _), state)) => {
+                match parse_expr_block(CHECK_FOR_ARROW | ACCEPT_MULTI_BACKPASSING, arena, state) {
+                    Err((_, fail)) => Err(fail),
+                    Ok((expr, state)) => {
+                        let (spaces_after, _) = eat_nc_or_empty(arena, state, 0);
+                        let expr = expr.spaced_around(arena, spaces_before, spaces_after);
+                        Ok(expr)
+                    }
+                }
+            }
+        };
 
-        match parser.parse(&self.arena, state, 0) {
-            Ok((_, loc_expr, _)) => Ok(loc_expr),
-            Err((_, fail)) => Err(SourceError {
-                problem: SyntaxError::Expr(fail, Position::default()),
-                bytes: original_bytes,
-            }),
-        }
+        out.map_err(|fail| SourceError {
+            problem: SyntaxError::Expr(fail, Position::default()),
+            bytes: original_bytes,
+        })
     }
 
     pub fn into_arena(self) -> Bump {
